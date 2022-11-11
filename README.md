@@ -2,7 +2,7 @@
 
 ## What is this??
 
-As the name would imply, this is an extension for the (Stable-Diffusion WebUI)[https://github.com/AUTOMATIC1111/stable-diffusion-webui] by @Automatic1111
+As the name would imply, this is an extension for the [Stable-Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) by @Automatic1111
 
 ## What does this do?
 
