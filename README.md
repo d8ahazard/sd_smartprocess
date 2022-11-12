@@ -21,6 +21,8 @@ Last, but not least, it offers a rudimentary way to swap the "class" of a captio
 
 As I said above, smart cropping utilizes a combination of YOLOV5 object recognition and BLIP/CLIP (and DeepDanBooru) captioning to automatically determine the most prominent subject in a photo, and automatically crop the subject as completely as possible. You can also specify a specific subject (dog/cat/woman/house) for the software to find, and skip the YOLOV5 detection entirely.
 
+<img src="https://user-images.githubusercontent.com/1633844/198178259-e1ade3d6-386e-41b8-9c93-0eca19c82d3d.png" width="550" height="741" />
+
 If a subject is not found, the image will be downscaled and cropped from the center.
 
 
