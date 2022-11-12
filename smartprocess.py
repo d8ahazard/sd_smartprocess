@@ -17,19 +17,22 @@ if cmd_opts.deepdanbooru:
     import modules.deepbooru as deepbooru
 
 
-def interrogate_image(image: Image):
-    prev_artists = shared.opts.interrogate_use_builtin_artists
-    prev_max = shared.opts.interrogate_clip_max_length
-    prev_min = shared.opts.interrogate_clip_min_length
-    shared.opts.interrogate_clip_min_length = 10
-    shared.opts.interrogate_clip_max_length = 20
-    shared.opts.interrogate_use_builtin_artists = False
-    prompt = shared.interrogator.interrogate(image)
-    shared.opts.interrogate_clip_min_length = prev_min
-    shared.opts.interrogate_clip_max_length = prev_max
-    shared.opts.interrogate_use_builtin_artists = prev_artists
-    full_caption = shared.interrogator.interrogate(image)
-    return prompt, full_caption
+def interrogate_image(image: Image, full=False):
+    if not full:
+        prev_artists = shared.opts.interrogate_use_builtin_artists
+        prev_max = shared.opts.interrogate_clip_max_length
+        prev_min = shared.opts.interrogate_clip_min_length
+        shared.opts.interrogate_clip_min_length = 10
+        shared.opts.interrogate_clip_max_length = 20
+        shared.opts.interrogate_use_builtin_artists = False
+        caption = shared.interrogator.interrogate(image)
+        shared.opts.interrogate_clip_min_length = prev_min
+        shared.opts.interrogate_clip_max_length = prev_max
+        shared.opts.interrogate_use_builtin_artists = prev_artists
+    else:
+        caption = shared.interrogator.interrogate(image)
+
+    return caption
 
 
 def preprocess(src,
@@ -148,7 +151,7 @@ def prework(src,
     shared.state.textinfo = "Preprocessing..."
     shared.state.job_count = len(files)
 
-    def build_caption(image, caption):
+    def build_caption(image):
         existing_caption = None
         if not append_filename:
             existing_caption_filename = os.path.splitext(filename)[0] + '.txt'
@@ -157,6 +160,10 @@ def prework(src,
                     existing_caption = file.read()
         else:
             existing_caption = ''.join(c for c in filename if c.isalpha() or c in [" ", ","])
+
+        caption = ""
+        if caption_image:
+            caption = interrogate_image(img, True)
 
         if caption_deepbooru:
             if len(caption) > 0:
@@ -262,16 +269,13 @@ def prework(src,
             continue
 
         # Interrogate once
-        short_caption, full_caption = interrogate_image(img)
+        short_caption = interrogate_image(img)
 
         if subject_class is not None and subject_class != "":
             short_caption = subject_class
 
-        # Build our caption
-        if caption_image:
-            full_caption = build_caption(img, full_caption)
         shared.state.current_image = img
-        shared.state.textinfo = f"Processing: '{full_caption}' ({filename})"
+        shared.state.textinfo = f"Processing: '({filename})"
         if crop_image:
             shared.state.textinfo = "Cropping..."
             if img.height > img.width:
@@ -283,6 +287,11 @@ def prework(src,
 
             if split and ratio < 1.0 and ratio <= split_threshold:
                 for splitted in split_pic(img, inverse_xy):
+                    # Build our caption
+                    full_caption = None
+                    if caption_image:
+                        full_caption = interrogate_image(splitted, True)
+                        full_caption = build_caption(splitted, full_caption)
                     save_pic(splitted, index, existing_caption=full_caption)
 
             im_data = crop_clip.get_center(img, prompt=short_caption)
@@ -346,6 +355,7 @@ def prework(src,
         if default_resize:
             img = images.resize_image(1, img, width, height)
         shared.state.current_image = img
+        full_caption = build_caption(img)
         save_pic(img, index, existing_caption=full_caption)
 
         shared.state.nextjob()
