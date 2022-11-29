@@ -66,9 +66,7 @@ def preprocess(src,
             shared.interrogator.load()
 
         if caption_deepbooru:
-            db_opts = deepbooru.create_deepbooru_opts()
-            db_opts[deepbooru.OPT_INCLUDE_RANKS] = False
-            deepbooru.create_deepbooru_process(opts.interrogate_deepbooru_score_threshold, db_opts)
+            deepbooru.model.start()
 
         prework(src,
                 dst,
@@ -100,7 +98,7 @@ def preprocess(src,
             shared.interrogator.send_blip_to_ram()
 
         if caption_deepbooru:
-            deepbooru.release_process()
+            deepbooru.model.stop()
 
     return "Processing complete.", ""
 
@@ -168,7 +166,7 @@ def prework(src,
         if caption_deepbooru:
             if len(caption) > 0:
                 caption += ", "
-            caption += deepbooru.get_tags_from_process(image)
+            caption += deepbooru.model.tag_multi(image)
 
         if pretxt_action == 'prepend' and existing_caption:
             caption = existing_caption + ' ' + caption
