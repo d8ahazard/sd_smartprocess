@@ -191,7 +191,7 @@ def prework(src,
             split_idx = 0
             while True and split_idx < len(split_cap):
                 cap_test += f" {split_cap[split_idx]}"
-                if len(cap_test < caption_length):
+                if len(cap_test) < caption_length:
                     caption = cap_test
                 split_idx += 1
 
