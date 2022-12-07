@@ -2,6 +2,7 @@ import math
 import os
 import sys
 
+import PIL
 import numpy as np
 import tqdm
 from PIL import Image, ImageOps
@@ -37,6 +38,7 @@ def interrogate_image(image: Image, full=False):
 
 def preprocess(src,
                dst,
+               pad,
                crop,
                width,
                height,
@@ -60,6 +62,8 @@ def preprocess(src,
                scaler
                ):
     try:
+        if pad and crop:
+            crop = False
         shared.state.textinfo = "Loading models for smart processing..."
         safe.RestrictedUnpickler = reallysafe.RestrictedUnpickler
         if caption:
@@ -70,6 +74,7 @@ def preprocess(src,
 
         prework(src,
                 dst,
+                pad,
                 crop,
                 width,
                 height,
@@ -105,6 +110,7 @@ def preprocess(src,
 
 def prework(src,
             dst,
+            pad_image,
             crop_image,
             width,
             height,
@@ -135,7 +141,7 @@ def prework(src,
     src = os.path.abspath(src)
     dst = os.path.abspath(dst)
 
-    if not crop_image and not caption_image and not restore_faces and not upscale:
+    if not crop_image and not caption_image and not restore_faces and not upscale and not pad_image:
         print("Nothing to do.")
         shared.state.textinfo = "Nothing to do!"
         return
@@ -148,6 +154,31 @@ def prework(src,
 
     shared.state.textinfo = "Preprocessing..."
     shared.state.job_count = len(files)
+
+    def pad_image(pil_img: Image, dest_width, dest_height):
+        src_width, src_height = pil_img.size
+        pad_width = dest_width
+        pad_height = dest_height
+        # If everything is square, just resize
+        if src_width == src_height and dest_width == dest_height:
+            pil_img.resize((dest_width, dest_height), resample=PIL.Image.LANCZOS)
+        else:
+            # If image is wider than tall
+            if src_width > src_height:
+                # And destination is square
+                if dest_width == dest_height:
+                    pad_height = dest_width * src_height / src_width
+
+        if src_width == src_height:
+            return pil_img
+        elif src_width > src_height:
+            result = Image.new(pil_img.mode, (src_width, src_width))
+            result.paste(pil_img, (0, (src_width - src_height) // 2))
+            return result
+        else:
+            result = Image.new(pil_img.mode, (src_height, src_height))
+            result.paste(pil_img, ((src_height - src_width) // 2, 0))
+            return result
 
     def build_caption(image):
         existing_caption = None
@@ -266,15 +297,14 @@ def prework(src,
         except Exception:
             continue
 
-        # Interrogate once
-        short_caption = interrogate_image(img)
-
-        if subject_class is not None and subject_class != "":
-            short_caption = subject_class
-
-        shared.state.current_image = img
         shared.state.textinfo = f"Processing: '({filename})"
         if crop_image:
+            # Interrogate once
+            short_caption = interrogate_image(img)
+
+            if subject_class is not None and subject_class != "":
+                short_caption = subject_class
+
             shared.state.textinfo = "Cropping..."
             if img.height > img.width:
                 ratio = (img.width * height) / (img.height * width)
@@ -288,8 +318,7 @@ def prework(src,
                     # Build our caption
                     full_caption = None
                     if caption_image:
-                        full_caption = interrogate_image(splitted, True)
-                        full_caption = build_caption(splitted, full_caption)
+                        full_caption = build_caption(splitted)
                     save_pic(splitted, index, existing_caption=full_caption)
 
             im_data = crop_clip.get_center(img, prompt=short_caption)
@@ -349,6 +378,9 @@ def prework(src,
             img = res
             default_resize = True
             shared.state.current_image = img
+
+        if pad_image:
+            default_resize = True
 
         if default_resize:
             img = images.resize_image(1, img, width, height)

@@ -14,10 +14,11 @@ def on_ui_tabs():
                 with gr.Tab("Directories"):
                     sp_src = gr.Textbox(label='Source directory')
                     sp_dst = gr.Textbox(label='Destination directory')
-                    sp_width = gr.Slider(minimum=64, maximum=2048, step=64, label="Width", value=512)
-                    sp_height = gr.Slider(minimum=64, maximum=2048, step=64, label="Height", value=512)
 
                 with gr.Tab("Cropping"):
+                    sp_width = gr.Slider(minimum=64, maximum=2048, step=64, label="Output Width", value=512)
+                    sp_height = gr.Slider(minimum=64, maximum=2048, step=64, label="Output Height", value=512)
+                    sp_pad = gr.Checkbox(label="Pad Images")
                     sp_crop = gr.Checkbox(label='Crop Images')
                     sp_flip = gr.Checkbox(label='Create flipped copies')
                     sp_split = gr.Checkbox(label='Split over-sized images')
@@ -75,6 +76,7 @@ def on_ui_tabs():
             inputs=[
                 sp_src,
                 sp_dst,
+                sp_pad,
                 sp_crop,
                 sp_width,
                 sp_height,
