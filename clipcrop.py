@@ -42,8 +42,8 @@ def find_position(parent: Image, child: Image):
 class CropClip:
     def __init__(self):
         # Model
-        model_name = 'yolov5m6.pt'
-        model_url = 'https://github.com/ultralytics/yolov5/releases/download/v6.2/yolov5m6.pt'
+        model_name = 'yolov5m6v7.pt'
+        model_url = 'https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5m6.pt'
         model_dir = os.path.join(modules.paths.models_path, "yolo")
         model_path = modelloader.load_models(model_dir, model_url, None, '.pt', model_name)
         self.model = torch.hub.load('ultralytics/yolov5', 'custom', model_path[0])
@@ -102,8 +102,14 @@ class CropClip:
         # Retrieve the description vector and the photo vectors
         similarity = text_encoded.cpu().numpy() @ image_features.cpu().numpy().T
         similarity = similarity[0]
-        scores, imgs = similarity_top(similarity, N=1)
-        out = imgs[0]
+        scores, imgs = similarity_top(similarity, N=3)
+        max_area = 0
+        for img in imgs:
+            img_area = img.width * img.height
+            if img_area > max_area:
+                max_area = img_area
+                out = img
+
         res = cv2.matchTemplate(numpy.array(image), numpy.array(out), cv2.TM_SQDIFF)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum

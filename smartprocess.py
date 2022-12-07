@@ -41,7 +41,6 @@ def preprocess(src,
                pad,
                crop,
                width,
-               height,
                append_filename,
                save_txt,
                pretxt_action,
@@ -77,7 +76,6 @@ def preprocess(src,
                 pad,
                 crop,
                 width,
-                height,
                 append_filename,
                 save_txt,
                 pretxt_action,
@@ -113,7 +111,6 @@ def prework(src,
             pad_image,
             crop_image,
             width,
-            height,
             append_filename,
             save_txt,
             pretxt_action,
@@ -137,7 +134,7 @@ def prework(src,
     except:
         pass
     width = width
-    height = height
+    height = width
     src = os.path.abspath(src)
     dst = os.path.abspath(dst)
 
@@ -154,31 +151,6 @@ def prework(src,
 
     shared.state.textinfo = "Preprocessing..."
     shared.state.job_count = len(files)
-
-    def pad_image(pil_img: Image, dest_width, dest_height):
-        src_width, src_height = pil_img.size
-        pad_width = dest_width
-        pad_height = dest_height
-        # If everything is square, just resize
-        if src_width == src_height and dest_width == dest_height:
-            pil_img.resize((dest_width, dest_height), resample=PIL.Image.LANCZOS)
-        else:
-            # If image is wider than tall
-            if src_width > src_height:
-                # And destination is square
-                if dest_width == dest_height:
-                    pad_height = dest_width * src_height / src_width
-
-        if src_width == src_height:
-            return pil_img
-        elif src_width > src_height:
-            result = Image.new(pil_img.mode, (src_width, src_width))
-            result.paste(pil_img, (0, (src_width - src_height) // 2))
-            return result
-        else:
-            result = Image.new(pil_img.mode, (src_height, src_height))
-            result.paste(pil_img, ((src_height - src_width) // 2, 0))
-            return result
 
     def build_caption(image):
         existing_caption = None
@@ -231,14 +203,12 @@ def prework(src,
 
     def save_pic_with_caption(image, img_index, existing_caption):
 
-        if not append_filename:
-            filename_part = filename
-            filename_part = os.path.splitext(filename_part)[0]
-            filename_part = os.path.basename(filename_part)
-        else:
+        if append_filename:
             filename_part = existing_caption
+            basename = f"{img_index:05}-{subindex[0]}-{filename_part}"
+        else:
+            basename = f"{img_index:05}-{subindex[0]}"
 
-        basename = f"{img_index:05}-{subindex[0]}-{filename_part}"
         shared.state.current_image = img
         image.save(os.path.join(dst, f"{basename}.png"))
 
@@ -305,7 +275,7 @@ def prework(src,
             if subject_class is not None and subject_class != "":
                 short_caption = subject_class
 
-            shared.state.textinfo = "Cropping..."
+            shared.state.textinfo = f"Cropping: {short_caption}"
             if img.height > img.width:
                 ratio = (img.width * height) / (img.height * width)
                 inverse_xy = False
@@ -320,6 +290,19 @@ def prework(src,
                     if caption_image:
                         full_caption = build_caption(splitted)
                     save_pic(splitted, index, existing_caption=full_caption)
+
+            src_ratio = img.width / img.height
+            # Pad image before cropping?
+            if src_ratio != 1:
+                if img.width > img.height:
+                    pad_width = img.width
+                    pad_height = img.width
+                else:
+                    pad_width = img.height
+                    pad_height = img.height
+                res = Image.new("RGB", (pad_width, pad_height))
+                res.paste(img, box=(pad_width // 2 - img.width // 2, pad_height // 2 - img.height // 2))
+                img = res
 
             im_data = crop_clip.get_center(img, prompt=short_caption)
             crop_width = im_data[1] - im_data[0]
@@ -380,7 +363,16 @@ def prework(src,
             shared.state.current_image = img
 
         if pad_image:
-            default_resize = True
+            ratio = width / height
+            src_ratio = img.width / img.height
+
+            src_w = width if ratio < src_ratio else img.width * height // img.height
+            src_h = height if ratio >= src_ratio else img.height * width // img.width
+
+            resized = images.resize_image(0, img, src_w, src_h)
+            res = Image.new("RGB", (width, height))
+            res.paste(resized, box=(width // 2 - src_w // 2, height // 2 - src_h // 2))
+            img = res
 
         if default_resize:
             img = images.resize_image(1, img, width, height)

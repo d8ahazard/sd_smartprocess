@@ -16,8 +16,7 @@ def on_ui_tabs():
                     sp_dst = gr.Textbox(label='Destination directory')
 
                 with gr.Tab("Cropping"):
-                    sp_width = gr.Slider(minimum=64, maximum=2048, step=64, label="Output Width", value=512)
-                    sp_height = gr.Slider(minimum=64, maximum=2048, step=64, label="Output Height", value=512)
+                    sp_size = gr.Slider(minimum=64, maximum=2048, step=64, label="Output Size", value=512)
                     sp_pad = gr.Checkbox(label="Pad Images")
                     sp_crop = gr.Checkbox(label='Crop Images')
                     sp_flip = gr.Checkbox(label='Create flipped copies')
@@ -78,8 +77,7 @@ def on_ui_tabs():
                 sp_dst,
                 sp_pad,
                 sp_crop,
-                sp_width,
-                sp_height,
+                sp_size,
                 sp_caption_append_file,
                 sp_caption_save_txt,
                 sp_txt_action,
