@@ -11,6 +11,7 @@ import modules.codeformer_model
 import modules.gfpgan_model
 import reallysafe
 from clipcrop import CropClip
+from extensions.sd_dreambooth_extension.dreambooth.utils import list_features, is_image
 from extensions.sd_smartprocess.clipinterrogator import ClipInterrogator
 from extensions.sd_smartprocess.interrogator import WaifuDiffusionInterrogator, BooruInterrogator
 from modules import shared, images, safe
@@ -38,6 +39,7 @@ def preprocess(rename,
                caption_clip,
                clip_use_v2,
                clip_append_flavor,
+               clip_max_flavors,
                clip_append_medium,
                clip_append_movement,
                clip_append_artist,
@@ -124,7 +126,7 @@ def preprocess(rename,
             out_tags = []
             if clip_interrogator is not None:
                 if caption_clip:
-                    tags = clip_interrogator.interrogate(img)
+                    tags = clip_interrogator.interrogate(img, max_flavors=clip_max_flavors)
                     for tag in tags:
                         #print(f"CLIPTag: {tag}")
                         out_tags.append(tag)
@@ -206,6 +208,7 @@ def preprocess(rename,
         image_index = 0
 
         # Enumerate images
+        pil_features = list_features()
         for index, src_image in enumerate(tqdm.tqdm(files)):
             # Quit on cancel
             if shared.state.interrupted:
@@ -213,6 +216,9 @@ def preprocess(rename,
                 return msg, msg
 
             filename = os.path.join(src, src_image)
+            if not is_image(filename):
+                continue
+
             try:
                 img = Image.open(filename).convert("RGB")
             except Exception as e:

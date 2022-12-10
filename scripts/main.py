@@ -30,6 +30,7 @@ def on_ui_tabs():
                     sp_caption_clip = gr.Checkbox(label="Add CLIP results to Caption")
                     sp_clip_use_v2 = gr.Checkbox(label="Use v2 CLIP Model", value=True)
                     sp_clip_append_flavor = gr.Checkbox(label="Append Flavor tags from CLIP")
+                    sp_clip_max_flavors = gr.Number(label="Max flavors to append.", value=4)
                     sp_clip_append_medium = gr.Checkbox(label="Append Medium tags from CLIP")
                     sp_clip_append_movement = gr.Checkbox(label="Append Movement tags from CLIP")
                     sp_clip_append_artist = gr.Checkbox(label="Append Artist tags from CLIP")
@@ -91,6 +92,7 @@ def on_ui_tabs():
                 sp_caption_clip,
                 sp_clip_use_v2,
                 sp_clip_append_flavor,
+                sp_clip_max_flavors,
                 sp_clip_append_medium,
                 sp_clip_append_movement,
                 sp_clip_append_artist,

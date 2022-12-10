@@ -58,6 +58,7 @@ class ClipInterrogator(Interrogator):
             model_name = "ViT-H-14/laion2b_s32b_b79k"
         else:
             model_name = "ViT-L-14/openai"
+        print(f"Loading CLIP model from {model_name}")
         self.append_artist = append_artist
         self.append_medium = append_medium
         self.append_movement = append_movement
