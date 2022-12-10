@@ -8,11 +8,9 @@ import numpy as np
 import torch
 from PIL import Image
 from clip import clip
-from transformers import CLIPProcessor, CLIPModel, pipeline
 
 import modules.paths
 from modules import shared, modelloader
-from repositories.CodeFormer.facelib.detection.yolov5face.utils.general import xyxy2xywh, xywh2xyxy
 
 
 def clip_boxes(boxes, shape):
