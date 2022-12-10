@@ -134,11 +134,6 @@ def preprocess(rename,
             if wd_interrogator is not None:
                 ratings, tags = wd_interrogator.interrogate(img)
 
-                for rating in ratings:
-                    #print(f"Rating {rating} score is {ratings[rating]}")
-                    if ratings[rating] >= wd14_min_score:
-                        out_tags.append(rating)
-
                 for tag in sorted(tags, key=tags.get, reverse=True):
                     if tags[tag] >= wd14_min_score:
                         #print(f"WDTag {tag} score is {tags[tag]}")
