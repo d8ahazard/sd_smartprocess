@@ -236,7 +236,6 @@ def preprocess(rename,
                 if subject_class is not None and subject_class != "":
                     short_caption = subject_class
 
-                shared.state.textinfo = f"Cropping: {short_caption}"
                 src_ratio = img.width / img.height
 
                 # Pad image before cropping?
