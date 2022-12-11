@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import tqdm
 from PIL import Image, ImageOps
+from functools import reduce
 
 import modules.codeformer_model
 import modules.gfpgan_model
@@ -96,9 +97,12 @@ def preprocess(rename,
 
         if crop:
             printi("Loading YOLOv5 interrogator...")
+            try:
+                del sys.modules['models']
+            except:
+                pass
             crop_clip = CropClip()
 
-            del sys.modules['models']
 
         src = os.path.abspath(src)
         dst = os.path.abspath(dst)
@@ -184,6 +188,8 @@ def preprocess(rename,
                     split_idx += 1
 
             caption_txt = caption_txt.strip()
+            # danbooru_replace = ("_", " "), ("\\", ""), ("(", ""), (")", "")
+            # caption_text = reduce(lambda a, kv: a.replace(*kv), danbooru_replace, caption_text)
             return caption_txt
 
         def save_pic(image, src_name, img_index, existing_caption=None, flipped=False):
