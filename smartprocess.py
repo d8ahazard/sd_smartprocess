@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import traceback
+from pathlib import Path
 
 import numpy as np
 import tqdm
@@ -211,7 +212,7 @@ def preprocess(rename,
                 return msg, msg
 
             filename = os.path.join(src, src_image)
-            if not is_image(filename):
+            if not is_image(Path(filename), pil_features):
                 continue
 
             try:
