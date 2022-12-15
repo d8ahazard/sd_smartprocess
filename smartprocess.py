@@ -1,31 +1,50 @@
-import math
 import os
 import sys
 import traceback
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
 import tqdm
-from PIL import Image, ImageOps
-from functools import reduce
+from PIL import Image, ImageOps, features
 
 import modules.codeformer_model
 import modules.gfpgan_model
 import reallysafe
 from clipcrop import CropClip
-from extensions.sd_dreambooth_extension.dreambooth.utils import list_features, is_image
 from extensions.sd_smartprocess.clipinterrogator import ClipInterrogator
 from extensions.sd_smartprocess.interrogator import WaifuDiffusionInterrogator, BooruInterrogator
 from modules import shared, images, safe
-from modules.shared import cmd_opts
-
-if cmd_opts.deepdanbooru:
-    import modules.deepbooru as deepbooru
 
 
 def printi(message):
     shared.state.textinfo = message
     print(message)
+
+
+def list_features():
+    # Create buffer for pilinfo() to write into rather than stdout
+    buffer = StringIO()
+    features.pilinfo(out=buffer)
+    pil_features = []
+    # Parse and analyse lines
+    for line in buffer.getvalue().splitlines():
+        if "Extensions:" in line:
+            ext_list = line.split(": ")[1]
+            extensions = ext_list.split(", ")
+            for extension in extensions:
+                if extension not in pil_features:
+                    pil_features.append(extension)
+    return pil_features
+
+
+def is_image(path: Path, feats=None):
+    if feats is None:
+        feats = []
+    if not len(feats):
+        feats = list_features()
+    is_img = path.is_file() and path.suffix.lower() in feats
+    return is_img
 
 
 def preprocess(rename,
