@@ -2,8 +2,6 @@
 
 import os
 import re
-import sys
-import traceback
 from collections import namedtuple
 from pathlib import Path
 from typing import Tuple, Dict
@@ -11,16 +9,13 @@ from typing import Tuple, Dict
 import numpy as np
 import pandas as pd
 import torch
-import open_clip
 from PIL import Image
 from huggingface_hub import hf_hub_download
-from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
 
 import modules.deepbooru
 import modules.shared as shared
 from extensions.sd_smartprocess import dbimutils
-from modules import devices, paths, lowvram, modelloader
+from modules import devices
 from modules import images
 from modules.deepbooru import re_special as tag_escape_pattern
 

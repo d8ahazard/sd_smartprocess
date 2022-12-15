@@ -78,7 +78,6 @@ def preprocess(rename,
                upscale_ratio,
                scaler
                ):
-
     try:
         shared.state.textinfo = "Initializing smart processing..."
         safe.RestrictedUnpickler = reallysafe.RestrictedUnpickler
@@ -122,7 +121,6 @@ def preprocess(rename,
                 pass
             crop_clip = CropClip()
 
-
         src = os.path.abspath(src)
         dst = os.path.abspath(dst)
 
@@ -152,7 +150,7 @@ def preprocess(rename,
                 if caption_clip:
                     tags = clip_interrogator.interrogate(img, max_flavors=clip_max_flavors)
                     for tag in tags:
-                        #print(f"CLIPTag: {tag}")
+                        # print(f"CLIPTag: {tag}")
                         out_tags.append(tag)
 
             if wd_interrogator is not None:
@@ -160,7 +158,7 @@ def preprocess(rename,
 
                 for tag in sorted(tags, key=tags.get, reverse=True):
                     if tags[tag] >= wd14_min_score:
-                        #print(f"WDTag {tag} score is {tags[tag]}")
+                        # print(f"WDTag {tag} score is {tags[tag]}")
                         out_tags.append(tag)
                     else:
                         break
@@ -169,7 +167,7 @@ def preprocess(rename,
                 tags = db_interrogator.interrogate(image)
                 for tag in sorted(tags, key=tags.get, reverse=True):
                     if tags[tag] >= booru_min_score:
-                        #print(f"DBTag {tag} score is {tags[tag]}")
+                        # print(f"DBTag {tag} score is {tags[tag]}")
                         out_tags.append(tag)
 
             # Remove duplicates

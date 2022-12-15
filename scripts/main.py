@@ -2,9 +2,9 @@ import gradio as gr
 
 from extensions.sd_smartprocess import smartprocess
 from modules import script_callbacks, shared
+from modules.call_queue import wrap_gradio_gpu_call
 from modules.shared import cmd_opts
 from modules.ui import setup_progressbar
-from webui import wrap_gradio_gpu_call
 
 
 def on_ui_tabs():
@@ -36,7 +36,8 @@ def on_ui_tabs():
                     sp_clip_append_artist = gr.Checkbox(label="Append Artist tags from CLIP")
                     sp_clip_append_trending = gr.Checkbox(label="Append Trending tags from CLIP")
                     sp_caption_wd14 = gr.Checkbox(label="Add WD14 Tags to Caption")
-                    sp_wd14_min_score = gr.Slider(label="Minimum Score for WD14 Tags", value=0.75, minimum=0.01, maximum=1,
+                    sp_wd14_min_score = gr.Slider(label="Minimum Score for WD14 Tags", value=0.75, minimum=0.01,
+                                                  maximum=1,
                                                   step=0.01)
                     sp_caption_deepbooru = gr.Checkbox(label='Add DeepDanbooru Tags to Caption',
                                                        visible=True if cmd_opts.deepdanbooru else False)
@@ -50,13 +51,13 @@ def on_ui_tabs():
 
                 with gr.Tab("Post-Processing"):
                     sp_restore_faces = gr.Checkbox(label='Restore Faces', value=False)
-                    sp_face_model = gr.Dropdown(label="Face Restore Model",choices=["GFPGAN", "Codeformer"], value="GFPGAN")
+                    sp_face_model = gr.Dropdown(label="Face Restore Model", choices=["GFPGAN", "Codeformer"],
+                                                value="GFPGAN")
                     sp_upscale = gr.Checkbox(label='Upscale and Resize', value=False)
                     sp_upscale_ratio = gr.Slider(label="Upscale Ratio", value=2, step=1, minimum=2, maximum=4)
                     sp_scaler = gr.Radio(label='Upscaler', elem_id="sp_scaler",
-                                                 choices=[x.name for x in shared.sd_upscalers],
-                                                 value=shared.sd_upscalers[0].name, type="index")
-
+                                         choices=[x.name for x in shared.sd_upscalers],
+                                         value=shared.sd_upscalers[0].name, type="index")
 
             # Preview/progress
             with gr.Column(variant="panel"):

@@ -1,20 +1,20 @@
 import hashlib
 import inspect
 import math
-import numpy as np
-import open_clip
 import os
 import pickle
 import time
-import torch
-
 from dataclasses import dataclass
-from models.blip import blip_decoder, BLIP_Decoder
+from typing import List
+
+import numpy as np
+import open_clip
+import torch
 from PIL import Image
+from models.blip import blip_decoder, BLIP_Decoder
 from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
-from typing import List
 
 from extensions.sd_smartprocess.interrogator import Interrogator
 
@@ -50,9 +50,9 @@ class ClipInterrogator(Interrogator):
     def __init__(self,
                  use_v2,
                  append_artist,
-                 append_medium, 
-                 append_movement, 
-                 append_flavor, 
+                 append_medium,
+                 append_movement,
+                 append_flavor,
                  append_trending):
         if use_v2:
             model_name = "ViT-H-14/laion2b_s32b_b79k"
