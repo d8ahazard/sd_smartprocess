@@ -213,7 +213,7 @@ def preprocess(rename,
             if rename:
                 basename = f"{img_index:05}"
             else:
-                basename = os.path.splitext(src_name)
+                basename = os.path.splitext(src_name)[0]
                 if flipped:
                     basename += "_flipped"
 
