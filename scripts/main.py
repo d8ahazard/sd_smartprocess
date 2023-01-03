@@ -28,6 +28,9 @@ def on_ui_tabs():
                     sp_txt_action = gr.Dropdown(label='Existing Caption Action', value="ignore",
                                                 choices=["ignore", "copy", "prepend", "append"])
                     sp_caption_clip = gr.Checkbox(label="Add CLIP results to Caption")
+                    sp_num_beams = gr.Slider(label="Number of CLIP beams", value=8, minimum=1, maximum=20)
+                    sp_min_clip = gr.Slider(label="CLIP Minimum length", value=10, minimum=5, maximum=75)
+                    sp_max_clip = gr.Slider(label="CLIP Minimum length", value=30, minimum=5, maximum=75)
                     sp_clip_use_v2 = gr.Checkbox(label="Use v2 CLIP Model", value=True)
                     sp_clip_append_flavor = gr.Checkbox(label="Append Flavor tags from CLIP")
                     sp_clip_max_flavors = gr.Number(label="Max flavors to append.", value=4)
@@ -91,6 +94,9 @@ def on_ui_tabs():
                 sp_caption,
                 sp_caption_length,
                 sp_caption_clip,
+                sp_num_beams,
+                sp_min_clip,
+                sp_max_clip,
                 sp_clip_use_v2,
                 sp_clip_append_flavor,
                 sp_clip_max_flavors,

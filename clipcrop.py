@@ -44,7 +44,10 @@ class CropClip:
         model_url = 'https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5m6.pt'
         model_dir = os.path.join(modules.paths.models_path, "yolo")
         model_path = modelloader.load_models(model_dir, model_url, None, '.pt', model_name)
+        was_safe_unpickle = shared.cmd_opts.disable_safe_unpickle
+        shared.cmd_opts.disable_safe_unpickle = True
         self.model = torch.hub.load('ultralytics/yolov5', 'custom', model_path[0])
+        shared.cmd_opts.disable_safe_unpickle = was_safe_unpickle
         # Prevent BLIP crossfire breakage
         try:
             del sys.modules['models']

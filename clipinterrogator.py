@@ -28,7 +28,8 @@ class Config:
 
     # blip settings
     blip_image_eval_size: int = 384
-    blip_max_length: int = 32
+    blip_max_length: int = 50
+    blip_min_length: int = 10
     blip_model_url: str = 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_large_caption.pth'
     blip_num_beams: int = 8
     blip_offload: bool = False
@@ -53,7 +54,10 @@ class ClipInterrogator(Interrogator):
                  append_medium,
                  append_movement,
                  append_flavor,
-                 append_trending):
+                 append_trending,
+                 num_beams,
+                 min_clip,
+                 max_clip):
         if use_v2:
             model_name = "ViT-H-14/laion2b_s32b_b79k"
         else:
@@ -72,8 +76,13 @@ class ClipInterrogator(Interrogator):
         self.trendings = None
         self.clip_model = None
         self.clip_preprocess = None
+        self.min_clip = min_clip
+        self.max_clip = max_clip
         config = Config
         config.clip_model_name = model_name
+        config.blip_min_length = min_clip
+        config.blip_max_length = max_clip
+        config.blip_num_beams = num_beams
         self.config = config
         self.device = config.device
 
@@ -167,7 +176,7 @@ class ClipInterrogator(Interrogator):
                 sample=False,
                 num_beams=self.config.blip_num_beams,
                 max_length=self.config.blip_max_length,
-                min_length=5
+                min_length=self.config.blip_min_length
             )
         if self.config.blip_offload:
             self.blip_model = self.blip_model.to("cpu")

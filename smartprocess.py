@@ -58,6 +58,9 @@ def preprocess(rename,
                caption,
                caption_length,
                caption_clip,
+               num_beams,
+               min_clip,
+               max_clip,
                clip_use_v2,
                clip_append_flavor,
                clip_max_flavors,
@@ -103,7 +106,10 @@ def preprocess(rename,
                                                      clip_append_medium,
                                                      clip_append_movement,
                                                      clip_append_flavor,
-                                                     clip_append_trending)
+                                                     clip_append_trending,
+                                                     num_beams,
+                                                     min_clip,
+                                                     max_clip)
 
             if caption_deepbooru:
                 printi("\rLoading Deepbooru interrogator...")
@@ -304,6 +310,22 @@ def preprocess(rename,
                 img = img.crop((left, top, right, bottom))
                 shared.state.current_image = img
 
+                if pad:
+                    ratio = 1
+                    src_ratio = img.width / img.height
+
+                    src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
+                    src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
+
+                    resized = images.resize_image(0, img, src_w, src_h)
+                    res = Image.new("RGB", (max_size, max_size))
+                    res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
+                    img = res
+
+                # Resize again if image is not at the right size.
+                if img.width != max_size or img.height != max_size:
+                    img = images.resize_image(1, img, max_size, max_size)
+
             if restore_faces:
                 shared.state.textinfo = f"Restoring faces using {face_model}..."
                 if face_model == "gfpgan":
@@ -321,22 +343,6 @@ def preprocess(rename,
                 res = upscaler.scaler.upscale(img, upscale_ratio, upscaler.data_path)
                 img = res
                 shared.state.current_image = img
-
-            if pad:
-                ratio = 1
-                src_ratio = img.width / img.height
-
-                src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
-                src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
-
-                resized = images.resize_image(0, img, src_w, src_h)
-                res = Image.new("RGB", (max_size, max_size))
-                res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
-                img = res
-
-            # Resize again if image is not at the right size.
-            if img.width != max_size or img.height != max_size:
-                img = images.resize_image(1, img, max_size, max_size)
 
             # Build a caption, if enabled
             full_caption = build_caption(img) if caption else None
