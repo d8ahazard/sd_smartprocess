@@ -24,13 +24,13 @@ def on_ui_tabs():
 
                 with gr.Tab("Captions"):
                     sp_caption = gr.Checkbox(label='Generate Captions')
-                    sp_caption_length = gr.Number(label='Max Caption length (0=unlimited)', value=0, precision=0)
+                    sp_caption_length = gr.Slider(label='Max Caption Length (0=unlimited)', value=75, step=75, minimum=0, maximum=150)
                     sp_txt_action = gr.Dropdown(label='Existing Caption Action', value="ignore",
                                                 choices=["ignore", "copy", "prepend", "append"])
                     sp_caption_clip = gr.Checkbox(label="Add CLIP results to Caption")
                     sp_num_beams = gr.Slider(label="Number of CLIP beams", value=8, minimum=1, maximum=20)
-                    sp_min_clip = gr.Slider(label="CLIP Minimum length", value=10, minimum=5, maximum=75)
-                    sp_max_clip = gr.Slider(label="CLIP Minimum length", value=30, minimum=5, maximum=75)
+                    sp_min_clip = gr.Slider(label="CLIP Minimum length", value=30, minimum=5, maximum=75, step=1)
+                    sp_max_clip = gr.Slider(label="CLIP Maximum length", value=50, minimum=5, maximum=75, step=1)
                     sp_clip_use_v2 = gr.Checkbox(label="Use v2 CLIP Model", value=True)
                     sp_clip_append_flavor = gr.Checkbox(label="Append Flavor tags from CLIP")
                     sp_clip_max_flavors = gr.Number(label="Max flavors to append.", value=4, precision=0)
@@ -39,13 +39,14 @@ def on_ui_tabs():
                     sp_clip_append_artist = gr.Checkbox(label="Append Artist tags from CLIP")
                     sp_clip_append_trending = gr.Checkbox(label="Append Trending tags from CLIP")
                     sp_caption_wd14 = gr.Checkbox(label="Add WD14 Tags to Caption")
-                    sp_wd14_min_score = gr.Slider(label="Minimum Score for WD14 Tags", value=0.75, minimum=0.01,
+                    sp_wd14_min_score = gr.Slider(label="Minimum Score for WD14 Tags", value=0.85, minimum=0.01,
                                                   maximum=1,
                                                   step=0.01)
                     sp_caption_deepbooru = gr.Checkbox(label='Add DeepDanbooru Tags to Caption',
                                                        visible=True if cmd_opts.deepdanbooru else False)
-                    sp_booru_min_score = gr.Slider(label="Minimum Score for DeepDanbooru Tags", value=0.75,
+                    sp_booru_min_score = gr.Slider(label="Minimum Score for DeepDanbooru Tags", value=0.85,
                                                    minimum=0.01, maximum=1, step=0.01)
+                    sp_tags_to_ignore = gr.Textbox(label="Tags To Ignore", value="")
                     sp_replace_class = gr.Checkbox(label='Replace Class with Subject in Caption', value=False)
                     sp_class = gr.Textbox(label='Subject Class', placeholder='Subject class to crop (leave '
                                                                              'blank to auto-detect)')
@@ -108,6 +109,7 @@ def on_ui_tabs():
                 sp_wd14_min_score,
                 sp_caption_deepbooru,
                 sp_booru_min_score,
+                sp_tags_to_ignore,
                 sp_class,
                 sp_subject,
                 sp_replace_class,

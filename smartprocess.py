@@ -72,6 +72,7 @@ def preprocess(rename,
                wd14_min_score,
                caption_deepbooru,
                booru_min_score,
+               tags_to_ignore,
                subject_class,
                subject,
                replace_class,
@@ -177,21 +178,39 @@ def preprocess(rename,
                         # print(f"DBTag {tag} score is {tags[tag]}")
                         out_tags.append(tag)
 
-            # Remove duplicates
+            # Remove duplicates, filter dumb stuff
+            chars_to_strip = ["_\\("]
             unique_tags = []
+            ignore_tags = []
+            if tags_to_ignore != "" and tags_to_ignore is not None:
+                si_tags = tags_to_ignore.split(",")
+                for tag in si_tags:
+                    ignore_tags.append(tag.strip)
+
             for tag in out_tags:
-                if not tag in unique_tags:
+                if not tag in unique_tags and not "_\(" in tag and not tag in ignore_tags:
                     unique_tags.append(tag.strip())
+
+            existing_tags = existing_caption_txt.split(",")
+
+            if txt_action == "prepend" and len(existing_tags):
+                new_tags = existing_tags
+                for tag in unique_tags:
+                    if not tag in new_tags:
+                        new_tags.append(tag)
+                unique_tags = new_tags
+
+            if txt_action == 'append' and len(existing_tags):
+                for tag in existing_tags:
+                    if not tag in unique_tags:
+                        unique_tags.append(tag)
+
+            if txt_action == 'copy' and existing_caption_txt:
+                for tag in existing_tags:
+                    unique_tags.append(tag.strip())
+
             caption_txt = ", ".join(unique_tags)
 
-            if txt_action == 'prepend' and existing_caption_txt:
-                caption_txt = existing_caption_txt + ' ' + caption_txt
-            elif txt_action == 'append' and existing_caption_txt:
-                caption_txt = caption_txt + ' ' + existing_caption_txt
-            elif txt_action == 'copy' and existing_caption_txt:
-                caption_txt = existing_caption_txt
-
-            caption_txt = caption_txt.strip()
             if replace_class and subject is not None and subject_class is not None:
                 # Find and replace "a SUBJECT CLASS" in caption_txt with subject name
                 if f"a {subject_class}" in caption_txt:
@@ -200,20 +219,12 @@ def preprocess(rename,
                 if subject_class in caption_txt:
                     caption_txt = caption_txt.replace(subject_class, subject)
 
-            if 0 < caption_length < len(caption_txt):
-                split_cap = caption_txt.split(" ")
-                caption_txt = ""
-                cap_test = ""
-                split_idx = 0
-                while True and split_idx < len(split_cap):
-                    cap_test += f" {split_cap[split_idx]}"
-                    if len(cap_test) < caption_length:
-                        caption_txt = cap_test
-                    split_idx += 1
+            tags = caption_txt.split(" ")
 
-            caption_txt = caption_txt.strip()
-            # danbooru_replace = ("_", " "), ("\\", ""), ("(", ""), (")", "")
-            # caption_text = reduce(lambda a, kv: a.replace(*kv), danbooru_replace, caption_text)
+            if caption_length != 0 and len(tags) > caption_length:
+                tags = tags[0:caption_length]
+                tags[-1] = tags[-1].rstrip(",")
+            caption_txt = " ".join(tags)
             return caption_txt
 
         def save_pic(image, src_name, img_index, existing_caption=None, flipped=False):
