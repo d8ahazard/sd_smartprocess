@@ -82,6 +82,7 @@ def preprocess(rename,
                scaler
                ):
     try:
+        shared.sd_model.to("cpu")
         shared.state.textinfo = "Initializing smart processing..."
         safe.RestrictedUnpickler = reallysafe.RestrictedUnpickler
 
@@ -370,7 +371,10 @@ def preprocess(rename,
         if caption_wd14:
             printi("Unloading wd14 interrogator...")
             wd_interrogator.unload()
-
+        try:
+            shared.sd_model.to(shared.device)
+        except:
+            pass
         return f"Successfully processed {len(files)} images.", f"Successfully processed {len(files)} images."
 
     except Exception as e:
