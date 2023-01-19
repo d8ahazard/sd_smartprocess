@@ -7,10 +7,10 @@ const SP_PROGRESS_LABEL = 'sp_progress';
 function start_smart_process() {
     rememberGallerySelection(SP_GALLERY_LABEL)
     gradioApp().querySelector('#sp_error').innerHTML = ''
-    var daGalleryElt = gradioApp().getElementById(SP_GALLERY_LABEL)
-    // set id of first child of daGalleryElt to 'sp_gallery_kid',
+    var spGalleryElt = gradioApp().getElementById(SP_GALLERY_LABEL)
+    // set id of first child of spGalleryElt to 'sp_gallery_kid',
     // required by AUTOMATIC1111 UI Logic
-    daGalleryElt.children[0].id = SP_GALLERY_CHILD
+    spGalleryElt.children[0].id = SP_GALLERY_CHILD
     var id = randomId();
     requestProgress(id,
         gradioApp().getElementById(SP_GALLERY_LABEL),
@@ -26,3 +26,7 @@ function start_smart_process() {
     argsToArray[0] = id;
     return argsToArray
 }
+
+onUiUpdate(function(){
+    check_gallery(SP_GALLERY_LABEL)
+})
