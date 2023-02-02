@@ -60,7 +60,7 @@ def on_ui_tabs():
                     sp_upscale = gr.Checkbox(label='Upscale and Resize', value=False)
                     sp_upscale_ratio = gr.Slider(label="Upscale Ratio", value=2, step=1, minimum=2, maximum=4)
                     sp_scaler = gr.Radio(label='Upscaler', elem_id="sp_scaler",
-                                         choices=[x.name for x in shared.sd_upscalers],
+                                         choices=[x.name for x in shared.sd_upscalers] + ["SD21"],
                                          value=shared.sd_upscalers[0].name, type="index")
 
             # Preview/progress
@@ -68,7 +68,7 @@ def on_ui_tabs():
                 sp_progress = gr.HTML(elem_id="sp_progress", value="")
                 sp_outcome = gr.HTML(elem_id="sp_error", value="")
                 sp_progressbar = gr.HTML(elem_id="sp_progressbar")
-                sp_gallery = gr.Gallery(label='Output', show_label=False, elem_id='sp_gallery').style(grid=4)
+                sp_gallery = gr.Gallery(label='Output', show_label=False, elem_id='sp_gallery', interactive=False).style(grid=4)
                 sp_preview = gr.Image(elem_id='sp_preview', visible=False)
                 setup_progressbar(sp_progressbar, sp_preview, 'sp', textinfo=sp_progress)
 

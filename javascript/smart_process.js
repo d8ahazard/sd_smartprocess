@@ -1,9 +1,12 @@
 function start_smart_process() {
-    requestProgress('sp');
+    let progress = gradioApp().getElementById("sp_progress");
+    let gallery = gradioApp().getElementById("sp_gallery");
+    console.log("Requesting progress:", progress, gallery);
+    requestProgress('sp', progress, gallery, atEnd, function(progress){});
     gradioApp().querySelector('#sp_error').innerHTML = '';
     return args_to_array(arguments);
 }
 
-onUiUpdate(function () {
-    check_progressbar('sp', 'sp_progressbar', 'sp_progress_span', '', 'sp_interrupt', 'sp_preview', 'sp_gallery')
-})
+function atEnd() {
+
+}

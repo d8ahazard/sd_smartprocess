@@ -117,3 +117,6 @@ class CropClip:
         top_left = min_loc
         bottom_right = (top_left[0] + out.width, top_left[1] + out.height)
         return [top_left[0], bottom_right[0], top_left[1], bottom_right[1]]
+
+    def unload(self):
+        del self.model
