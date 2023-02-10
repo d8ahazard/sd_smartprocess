@@ -322,17 +322,17 @@ def preprocess(rename,
                 img = img.crop((left, top, right, bottom))
                 shared.state.current_image = img
 
-                if pad:
-                    ratio = 1
-                    src_ratio = img.width / img.height
+            if pad:
+                ratio = 1
+                src_ratio = img.width / img.height
 
-                    src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
-                    src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
+                src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
+                src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
 
-                    resized = images.resize_image(0, img, src_w, src_h)
-                    res = Image.new("RGB", (max_size, max_size))
-                    res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
-                    img = res
+                resized = images.resize_image(0, img, src_w, src_h)
+                res = Image.new("RGB", (max_size, max_size))
+                res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
+                img = res
 
                 # Resize again if image is not at the right size.
                 if img.width != max_size or img.height != max_size:
