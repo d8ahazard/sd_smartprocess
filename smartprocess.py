@@ -185,7 +185,7 @@ def preprocess(rename,
             if tags_to_ignore != "" and tags_to_ignore is not None:
                 si_tags = tags_to_ignore.split(",")
                 for tag in si_tags:
-                    ignore_tags.append(tag.strip)
+                    ignore_tags.append(tag.strip())
 
             for tag in out_tags:
                 if not tag in unique_tags and not "_\(" in tag and not tag in ignore_tags:
