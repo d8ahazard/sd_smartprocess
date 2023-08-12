@@ -3,3 +3,4 @@ seaborn==0.12.1
 tensorflow
 open_clip_torch
 fairscale
+ultralytics
