@@ -137,6 +137,28 @@ def on_ui_tabs():
                 sp_preview = gr.Image(label='Preview', elem_id='sp_preview', visible=False)
 
                 setup_progressbar(sp_progressbar, sp_preview, 'sp', textinfo=sp_progress)
+                caption_inputs = [
+                    captioners,
+                    blip_initial_prompt,
+                    sp_caption_length,
+                    sp_txt_action,
+                    sp_num_beams,
+                    sp_min_clip,
+                    sp_max_clip,
+                    sp_clip_use_v2,
+                    sp_clip_append_flavor,
+                    sp_clip_max_flavors,
+                    sp_clip_append_medium,
+                    sp_clip_append_movement,
+                    sp_clip_append_artist,
+                    sp_clip_append_trending,
+                    sp_wd14_min_score,
+                    sp_booru_min_score,
+                    sp_tags_to_ignore,
+                    sp_subject,
+                    sp_class,
+                    sp_replace_class
+                ]
 
                 def caption_single():
                     global selected_current
@@ -169,25 +191,25 @@ def on_ui_tabs():
             if len(files) > 0:
                 outputs, caption_dict, msg = smartprocess.caption_images(files,
                                                                          captioners=captioners,
-                                                                         blip_initial_prompt=blip_initial_prompt.value,
-                                                                         caption_length=sp_caption_length.value,
-                                                                         txt_action=sp_txt_action.value,
-                                                                         num_beams=sp_num_beams.value,
-                                                                         min_clip=sp_min_clip.value,
-                                                                         max_clip=sp_max_clip.value,
-                                                                         clip_use_v2=sp_clip_use_v2.value,
-                                                                         clip_append_flavor=sp_clip_append_flavor.value,
-                                                                         clip_max_flavors=sp_clip_max_flavors.value,
-                                                                         clip_append_medium=sp_clip_append_medium.value,
-                                                                         clip_append_movement=sp_clip_append_movement.value,
-                                                                         clip_append_artist=sp_clip_append_artist.value,
-                                                                         clip_append_trending=sp_clip_append_trending.value,
-                                                                         wd14_min_score=sp_wd14_min_score.value,
-                                                                         booru_min_score=sp_booru_min_score.value,
-                                                                         tags_to_ignore=sp_tags_to_ignore.value,
-                                                                         subject_class=sp_class.value,
-                                                                         subject=sp_subject.value,
-                                                                         replace_class=sp_replace_class.value,
+                                                                         blip_initial_prompt=blip_initial_prompt,
+                                                                         caption_length=sp_caption_length,
+                                                                         txt_action=sp_txt_action,
+                                                                         num_beams=sp_num_beams,
+                                                                         min_clip=sp_min_clip,
+                                                                         max_clip=sp_max_clip,
+                                                                         clip_use_v2=sp_clip_use_v2,
+                                                                         clip_append_flavor=sp_clip_append_flavor,
+                                                                         clip_max_flavors=sp_clip_max_flavors,
+                                                                         clip_append_medium=sp_clip_append_medium,
+                                                                         clip_append_movement=sp_clip_append_movement,
+                                                                         clip_append_artist=sp_clip_append_artist,
+                                                                         clip_append_trending=sp_clip_append_trending,
+                                                                         wd14_min_score=sp_wd14_min_score,
+                                                                         booru_min_score=sp_booru_min_score,
+                                                                         tags_to_ignore=sp_tags_to_ignore,
+                                                                         subject_class=sp_class,
+                                                                         subject=sp_subject,
+                                                                         replace_class=sp_replace_class,
                                                                          save_output=False
                                                                          )
                 return outputs, caption_dict, msg
