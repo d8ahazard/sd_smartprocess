@@ -29,6 +29,7 @@ class BlipInterrogator(Interrogator):
 
     def interrogate(self, image):
         prompt = self.initial_prompt
+        print(f"Prompt: {prompt}")
         inputs = self.processor(image, text=prompt, return_tensors="pt").to(self.device, torch.float16)
         generated_ids = self.model.generate(**inputs, max_new_tokens=20)
         generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()

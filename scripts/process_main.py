@@ -95,15 +95,16 @@ def on_ui_tabs():
                         captioners[evt.value] = evt.selected
                         show_ll = captioners["LLAVA"]
                         show_clip = captioners["CLIP"]
+                        show_blip = captioners["BLIP"]
                         show_wd = captioners["WD14"]
                         show_dd = captioners["DeepDanbooru"]
-                        return gr.update(visible=show_ll), gr.update(visible=show_clip), gr.update(
+                        return gr.update(visible=show_ll), gr.update(visible=show_blip or show_clip), gr.update(visible=show_clip), gr.update(
                             visible=show_wd), gr.update(visible=show_dd)
 
                     sp_captioners.select(
                         fn=update_caption_groups,
                         inputs=[],
-                        outputs=[sp_llava_section, sp_clip_section, sp_wd14_section, sp_deepdanbooru_section]
+                        outputs=[sp_llava_section, sp_blip_section, sp_clip_section, sp_wd14_section, sp_deepdanbooru_section]
                     )
 
                 with gr.Tab("Post-Processing"):
