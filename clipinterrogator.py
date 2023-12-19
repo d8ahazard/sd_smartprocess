@@ -1,5 +1,4 @@
 import hashlib
-import inspect
 import math
 import os
 import pickle
@@ -11,28 +10,17 @@ import numpy as np
 import open_clip
 import torch
 from PIL import Image
-from models.blip import blip_decoder, BLIP_Decoder
-from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
 
+from extensions.sd_smartprocess.blipinterrogator import BlipInterrogator
 from extensions.sd_smartprocess.interrogator import Interrogator
 
 
 @dataclass
 class Config:
     # models can optionally be passed in directly
-    blip_model: BLIP_Decoder = None
     clip_model = None
     clip_preprocess = None
-
-    # blip settings
-    blip_image_eval_size: int = 384
-    blip_max_length: int = 50
-    blip_min_length: int = 10
-    blip_model_url: str = 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_large_caption.pth'
-    blip_num_beams: int = 8
-    blip_offload: bool = False
 
     # clip settings
     clip_model_name: str = 'ViT-L-14/openai'
@@ -57,7 +45,9 @@ class ClipInterrogator(Interrogator):
                  append_trending,
                  num_beams,
                  min_clip,
-                 max_clip):
+                 max_clip,
+                 max_flavors=32,
+                 blip_initial_prompt="a caption for this image is: "):
         if use_v2:
             model_name = "ViT-H-14/laion2b_s32b_b79k"
         else:
@@ -68,6 +58,7 @@ class ClipInterrogator(Interrogator):
         self.append_movement = append_movement
         self.append_trending = append_trending
         self.append_flavor = append_flavor
+        self.blip_initial_prompt = blip_initial_prompt
         self.artists = None
         self.flavors = None
         self.mediums = None
@@ -78,33 +69,31 @@ class ClipInterrogator(Interrogator):
         self.clip_preprocess = None
         self.min_clip = min_clip
         self.max_clip = max_clip
+        self.max_flavors = max_flavors
         config = Config
         config.clip_model_name = model_name
         config.blip_min_length = min_clip
         config.blip_max_length = max_clip
         config.blip_num_beams = num_beams
+        config.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.config = config
         self.device = config.device
 
-        if config.blip_model is None:
-            if not config.quiet:
-                print("Loading BLIP model...")
-            blip_path = os.path.dirname(inspect.getfile(blip_decoder))
-            configs_path = os.path.join(os.path.dirname(blip_path), 'configs')
-            med_config = os.path.join(configs_path, 'med_config.json')
-            blip_model = blip_decoder(
-                pretrained=config.blip_model_url,
-                image_size=config.blip_image_eval_size,
-                vit='large',
-                med_config=med_config
-            )
-            blip_model.eval()
-            blip_model = blip_model.to(config.device)
-            self.blip_model = blip_model
-        else:
-            self.blip_model = config.blip_model
-
+        self.blip_interrogator = BlipInterrogator(blip_initial_prompt)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.load_clip_model()
+
+    def set_model_type(self, use_v2):
+        if use_v2:
+            model_name = "ViT-H-14/laion2b_s32b_b79k"
+        else:
+            model_name = "ViT-L-14/openai"
+        if self.config.clip_model_name != model_name:
+            if self.clip_model is not None:
+                del self.clip_model
+            print(f"Loading CLIP model from {model_name}")
+            self.config.clip_model_name = model_name
+            self.load_clip_model()
 
     def load_clip_model(self):
         start_time = time.time()
@@ -160,27 +149,10 @@ class ClipInterrogator(Interrogator):
         if not config.quiet:
             print(f"Loaded CLIP model and data in {end_time - start_time:.2f} seconds.")
 
-    def generate_caption(self, pil_image: Image) -> str:
-        if self.config.blip_offload:
-            self.blip_model = self.blip_model.to(self.device)
-        size = self.config.blip_image_eval_size
-        gpu_image = transforms.Compose([
-            transforms.Resize((size, size), interpolation=InterpolationMode.BICUBIC),
-            transforms.ToTensor(),
-            transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
-        ])(pil_image).unsqueeze(0).to(self.device)
-
-        with torch.no_grad():
-            caption = self.blip_model.generate(
-                gpu_image,
-                sample=False,
-                num_beams=self.config.blip_num_beams,
-                max_length=self.config.blip_max_length,
-                min_length=self.config.blip_min_length
-            )
-        if self.config.blip_offload:
-            self.blip_model = self.blip_model.to("cpu")
-        return caption[0]
+    def generate_caption(self, image: Image) -> str:
+        self.blip_interrogator.initial_prompt = self.blip_initial_prompt
+        blip_caption = self.blip_interrogator.interrogate(image)
+        return blip_caption
 
     def image_to_features(self, image: Image) -> torch.Tensor:
         images = self.clip_preprocess(image).unsqueeze(0).to(self.device)
@@ -189,7 +161,7 @@ class ClipInterrogator(Interrogator):
             image_features /= image_features.norm(dim=-1, keepdim=True)
         return image_features
 
-    def interrogate(self, image: Image, max_flavors: int = 32, short=False) -> str:
+    def interrogate(self, image: Image, short=False) -> str:
         caption = self.generate_caption(image)
         image_features = self.image_to_features(image)
         best_prompt = caption
@@ -227,7 +199,7 @@ class ClipInterrogator(Interrogator):
             if self.append_flavor:
                 best_flavors = self.flavors.rank(image_features, self.config.flavor_intermediate_count)
                 extended_flavors = set(best_flavors)
-                for _ in tqdm(range(max_flavors), desc="Flavor chain", disable=self.config.quiet):
+                for _ in tqdm(range(self.max_flavors), desc="Flavor chain", disable=self.config.quiet):
                     best = self.rank_top(image_features, [f"{best_prompt}, {f}" for f in extended_flavors])
                     flave = best[len(best_prompt) + 2:]
                     if not check(flave):
@@ -263,6 +235,18 @@ class ClipInterrogator(Interrogator):
             text_features /= text_features.norm(dim=-1, keepdim=True)
             similarity = text_features @ image_features.T
         return similarity[0][0].item()
+
+    def unload(self):
+        if self.clip_model is not None:
+            self.clip_model.to('cpu')
+        if self.blip_interrogator is not None:
+            self.blip_interrogator.unload()
+
+    def load(self):
+        if self.clip_model is not None:
+            self.clip_model.to(self.device)
+        if self.blip_interrogator is not None:
+            self.blip_interrogator.load()
 
 
 class LabelTable:

@@ -47,6 +47,8 @@ class CropClip:
         was_safe_unpickle = shared.cmd_opts.disable_safe_unpickle
         shared.cmd_opts.disable_safe_unpickle = True
         self.model = torch.hub.load('ultralytics/yolov5', 'custom', model_path[0])
+        self.clip = None
+        self.preprocess = None
         shared.cmd_opts.disable_safe_unpickle = was_safe_unpickle
         # Prevent BLIP crossfire breakage
         try:
@@ -66,22 +68,23 @@ class CropClip:
             l = [image]
         device = shared.device
         # Take out cropped YOLO images, and get the features?
-        model, preprocess = clip.load("ViT-B/32", device=device)
-        images = torch.stack([preprocess(im) for im in l]).to(device)
+        if not self.model or not self.preprocess:
+            self.clip, self.preprocess = clip.load("ViT-B/32", device=device)
+        images = torch.stack([self.preprocess(im) for im in l]).to(device)
         with torch.no_grad():
-            image_features = model.encode_image(images)
+            image_features = self.clip.encode_image(images)
             image_features /= image_features.norm(dim=-1, keepdim=True)
 
         image_features.cpu().numpy()
         image_mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).cuda()
         image_std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).cuda()
 
-        images = [preprocess(im) for im in l]
+        images = [self.preprocess(im) for im in l]
         image_input = torch.tensor(np.stack(images)).cuda()
         image_input -= image_mean[:, None, None]
         image_input /= image_std[:, None, None]
         with torch.no_grad():
-            image_features = model.encode_image(image_input).float()
+            image_features = self.clip.encode_image(image_input).float()
         image_features /= image_features.norm(dim=-1, keepdim=True)
 
         def similarity_top(similarity_list, N):
@@ -97,7 +100,7 @@ class CropClip:
         # @title Crop
         with torch.no_grad():
             # Encode and normalize the description using CLIP
-            text_encoded = model.encode_text(clip.tokenize(prompt).to(device))
+            text_encoded = self.clip.encode_text(clip.tokenize(prompt).to(device))
             text_encoded /= text_encoded.norm(dim=-1, keepdim=True)
 
         # Retrieve the description vector and the photo vectors
@@ -105,12 +108,15 @@ class CropClip:
         similarity = similarity[0]
         scores, imgs = similarity_top(similarity, N=3)
         max_area = 0
+        out = None
         for img in imgs:
             img_area = img.width * img.height
             if img_area > max_area:
                 max_area = img_area
                 out = img
 
+        if not out:
+            out = image
         res = cv2.matchTemplate(numpy.array(image), numpy.array(out), cv2.TM_SQDIFF)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
@@ -119,4 +125,17 @@ class CropClip:
         return [top_left[0], bottom_right[0], top_left[1], bottom_right[1]]
 
     def unload(self):
-        del self.model
+        if self.model is not None:
+            self.model.to('cpu')
+        if self.clip:
+            self.clip.to('cpu')
+        if self.preprocess:
+            self.preprocess.to('cpu')
+
+    def load(self):
+        if self.model is not None:
+            self.model.to(shared.device)
+        if self.clip:
+            self.clip.to(shared.device)
+        if self.preprocess:
+            self.preprocess.to(shared.device)

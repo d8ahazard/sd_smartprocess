@@ -18,6 +18,7 @@ from extensions.sd_smartprocess import dbimutils
 from modules import devices
 from modules import images
 from modules.deepbooru import re_special as tag_escape_pattern
+from modules.paths_internal import models_path
 
 blip_image_eval_size = 384
 clip_model_name = 'ViT-L/14'
@@ -111,22 +112,29 @@ class Interrogator:
     ]:
         pass
 
+    def unload(self):
+        pass
+
 
 re_special = re.compile(r'([\\()])')
 
 
 class BooruInterrogator(Interrogator):
-    def __init__(self) -> None:
+    def __init__(self, min_score) -> None:
         self.tags = None
         self.booru = modules.deepbooru.DeepDanbooru()
+        self.min_score = min_score
         self.booru.start()
         self.model = self.booru.model
 
     def unload(self):
         self.booru.stop()
 
-    def interrogate(self, pil_image) -> Dict[str, float]:
-        pic = images.resize_image(2, pil_image.convert("RGB"), 512, 512)
+    def load(self):
+        pass
+
+    def interrogate(self, pil_image) -> str:
+        pic = images.resize_image(2, pil_image, 512, 512)
         a = np.expand_dims(np.array(pic, dtype=np.float32), 0) / 255
 
         with torch.no_grad(), devices.autocast():
@@ -149,7 +157,12 @@ class BooruInterrogator(Interrogator):
             tag_outformat = tag
             tag_outformat = re.sub(re_special, r'\\\1', tag_outformat)
             output[tag_outformat] = probability
-
+        out_tags = []
+        for tag in sorted(output, key=output.get, reverse=True):
+            if output[tag] >= self.min_score:
+                # print(f"DBTag {tag} score is {tags[tag]}")
+                out_tags.append(tag)
+        output = ", ".join(out_tags)
         return output
 
 
@@ -158,20 +171,22 @@ class WaifuDiffusionInterrogator(Interrogator):
             self,
             repo='SmilingWolf/wd-v1-4-vit-tagger',
             model_path='model.onnx',
-            tags_path='selected_tags.csv'
+            tags_path='selected_tags.csv',
+            min_score=0.35
     ) -> None:
         self.tags = None
         self.model = None
         self.repo = repo
         self.model_path = model_path
         self.tags_path = tags_path
+        self.min_score = min_score
         self.load()
 
     def download(self) -> Tuple[os.PathLike, os.PathLike]:
         print(f'Loading Waifu Diffusion tagger model file from {self.repo}')
-
-        model_path = Path(hf_hub_download(self.repo, filename=self.model_path))
-        tags_path = Path(hf_hub_download(self.repo, filename=self.tags_path))
+        model_dir = os.path.join(models_path, "wd14")
+        model_path = Path(hf_hub_download(self.repo, filename=self.model_path, local_dir=model_dir, local_dir_use_symlinks=False))
+        tags_path = Path(hf_hub_download(self.repo, filename=self.tags_path, local_dir=model_dir, local_dir_use_symlinks=False))
         return model_path, tags_path
 
     def load(self) -> None:
@@ -198,16 +213,12 @@ class WaifuDiffusionInterrogator(Interrogator):
         self.tags = pd.read_csv(tags_path)
 
     def unload(self):
-        if self.model is not None:
-            del self.model
+        pass
 
     def interrogate(
             self,
             image: Image
-    ) -> Tuple[
-        Dict[str, float],  # rating confidence
-        Dict[str, float]  # tag confidence
-    ]:
+    ) -> str:
         # code for converting the image and running the model is taken from the link below
         # thanks, SmilingWolf!
         # https://huggingface.co/spaces/SmilingWolf/wd-v1-4-tags/blob/main/app.py
@@ -243,5 +254,10 @@ class WaifuDiffusionInterrogator(Interrogator):
 
         # rest are regular tags
         tags = dict(tags[4:].values)
+        out_tags = []
+        for tag in sorted(tags, key=tags.get, reverse=True):
+            if tags[tag] >= self.min_score:
+                # print(f"WDTag {tag} score is {tags[tag]}")
+                out_tags.append(tag)
 
-        return ratings, tags
+        return ", ".join(out_tags)
