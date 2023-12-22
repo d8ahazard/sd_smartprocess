@@ -1,0 +1,48 @@
+#sp_src {
+    width: calc(100% - 84px);
+    min-width: calc(100% - 84px);
+}
+
+#sp_clear_src, #sp_load_src {
+    margin-top: 20px;
+    height: 36px;
+}
+
+#sp_top_btn_row {
+    padding-top: 20px;
+}
+
+#sp_clear_src, #sp_load_src {
+    flex: none;
+    max-width: 42px;
+    min-width: 42px !important;
+    height: 42px;
+    line-height: 1em;
+    border-radius: 0.5em;
+}
+
+#sp_backup_files {
+    max-width: 120px !important;
+    padding-top: 5px !important;
+    margin-left: 15px;
+    margin-right: 15px;
+    min-width: 120px !important;
+}
+
+#sp_file_options {
+    margin-left: 25%;
+}
+
+.inc_exc_btn {
+    margin-top: 20px !important;
+}
+
+#sp_progressbar.hide-container, #sp_progress.hide-container, #sp_error.hide-container {
+    min-height: 0;
+    display: none;
+}
+
+.short_check {
+    min-width: 120px !important;
+    max-width: 120px !important;
+}

@@ -12,8 +12,9 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from extensions.sd_smartprocess.blipinterrogator import BlipInterrogator
-from extensions.sd_smartprocess.interrogator import Interrogator
+from extensions.sd_smartprocess.interrogators.blip_interrogator import BLIPInterrogator
+from extensions.sd_smartprocess.interrogators.interrogator import Interrogator
+from extensions.sd_smartprocess.process_params import ProcessParams
 
 
 @dataclass
@@ -35,30 +36,27 @@ class Config:
     quiet: bool = False  # when quiet progress bars are not shown
 
 
-class ClipInterrogator(Interrogator):
-    def __init__(self,
-                 use_v2,
-                 append_artist,
-                 append_medium,
-                 append_movement,
-                 append_flavor,
-                 append_trending,
-                 num_beams,
-                 min_clip,
-                 max_clip,
-                 max_flavors=32,
-                 blip_initial_prompt="a caption for this image is: "):
-        if use_v2:
+class CLIPInterrogator(Interrogator):
+    params = {
+        "min_clip_tokens": 32,
+        "max_clip_tokens": 75,
+        "num_beams": 1,
+        "max_flavors": 32,
+        "use_v2": False,
+        "append_artist": False,
+        "append_medium": False,
+        "append_movement": False,
+        "append_flavor": False,
+        "append_trending": False
+    }
+
+    def __init__(self, params: ProcessParams):
+        super().__init__(params)
+        if params.clip_use_v2:
             model_name = "ViT-H-14/laion2b_s32b_b79k"
         else:
             model_name = "ViT-L-14/openai"
         print(f"Loading CLIP model from {model_name}")
-        self.append_artist = append_artist
-        self.append_medium = append_medium
-        self.append_movement = append_movement
-        self.append_trending = append_trending
-        self.append_flavor = append_flavor
-        self.blip_initial_prompt = blip_initial_prompt
         self.artists = None
         self.flavors = None
         self.mediums = None
@@ -67,20 +65,24 @@ class ClipInterrogator(Interrogator):
         self.trendings = None
         self.clip_model = None
         self.clip_preprocess = None
-        self.min_clip = min_clip
-        self.max_clip = max_clip
-        self.max_flavors = max_flavors
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.append_artist = params.clip_append_artist
+        self.append_medium = params.clip_append_medium
+        self.append_movement = params.clip_append_movement
+        self.append_trending = params.clip_append_trending
+        self.append_flavor = params.clip_append_flavor
+        self.blip_initial_prompt = params.blip_initial_prompt
+        self.min_clip_tokens = params.min_clip_tokens
+        self.max_clip_tokens = params.max_clip_tokens
+        self.max_flavors = params.clip_max_flavors
         config = Config
         config.clip_model_name = model_name
-        config.blip_min_length = min_clip
-        config.blip_max_length = max_clip
-        config.blip_num_beams = num_beams
-        config.device = "cuda" if torch.cuda.is_available() else "cpu"
+        config.blip_min_length = self.min_clip_tokens
+        config.blip_max_length = self.max_clip_tokens
+        config.blip_num_beams = params.num_beams
+        config.device = self.device
         self.config = config
-        self.device = config.device
-
-        self.blip_interrogator = BlipInterrogator(blip_initial_prompt)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.blip_interrogator = BLIPInterrogator(params.blip_initial_prompt)
         self.load_clip_model()
 
     def set_model_type(self, use_v2):
@@ -151,7 +153,7 @@ class ClipInterrogator(Interrogator):
 
     def generate_caption(self, image: Image) -> str:
         self.blip_interrogator.initial_prompt = self.blip_initial_prompt
-        blip_caption = self.blip_interrogator.interrogate(image)
+        blip_caption = self.blip_interrogator.interrogate(image, self.params)
         return blip_caption
 
     def image_to_features(self, image: Image) -> torch.Tensor:
@@ -161,7 +163,25 @@ class ClipInterrogator(Interrogator):
             image_features /= image_features.norm(dim=-1, keepdim=True)
         return image_features
 
-    def interrogate(self, image: Image, short=False) -> str:
+    def interrogate(self, image: Image, params: ProcessParams, unload: bool = False, short: bool = False) -> str:
+        self.load()
+        self.params = params
+        self.append_artist = params.clip_append_artist
+        self.append_medium = params.clip_append_medium
+        self.append_movement = params.clip_append_movement
+        self.append_trending = params.clip_append_trending
+        self.append_flavor = params.clip_append_flavor
+        self.blip_initial_prompt = params.blip_initial_prompt
+        self.min_clip_tokens = params.min_clip_tokens
+        self.max_clip_tokens = params.max_clip_tokens
+        self.max_flavors = params.clip_max_flavors
+        config = Config
+        config.blip_min_length = self.min_clip_tokens
+        config.blip_max_length = self.max_clip_tokens
+        config.blip_num_beams = params.num_beams
+        config.device = self.device
+        self.config = config
+
         caption = self.generate_caption(image)
         image_features = self.image_to_features(image)
         best_prompt = caption
@@ -218,6 +238,8 @@ class ClipInterrogator(Interrogator):
             tags = best_prompt.split(",")
         else:
             tags = [best_prompt]
+        if unload:
+            self.unload()
         return tags
 
     def rank_top(self, image_features: torch.Tensor, text_array: List[str]) -> str:

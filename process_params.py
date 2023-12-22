@@ -1,51 +1,57 @@
 from dataclasses import dataclass, field
-from typing import List
-
-from extensions.sd_smartprocess.interrogator import Interrogator
+from typing import List, Dict
 
 
 @dataclass
 class ProcessParams:
-    rename: bool = False
-    src_files: List[str] = field(default_factory=lambda: [])
-    dst: str = ""
-    pad: bool = False
-    crop: bool = False
-    max_size: int = 1024
-    txt_action: str = "prepend"
-    flip: bool = False
+    auto_save: bool = False
     blip_initial_prompt = "a caption for this image is: "
+    booru_min_score: float = 0.75
     caption: bool = False
-    captioners: List[str] = field(default_factory=lambda: [])
-    caption_length: int = 77
-    num_beams: int = 5
-    min_clip: float = 0.0
-    max_clip: float = 1.0
-    clip_use_v2: bool = False
+    captioners: Dict[str, bool] = field(default_factory=lambda: [])
+    clip_append_artist: bool = False
     clip_append_flavor: bool = False
-    clip_max_flavors: int = 3
     clip_append_medium: bool = False
     clip_append_movement: bool = False
-    clip_append_artist: bool = False
     clip_append_trending: bool = False
-    wd14_min_score: float = 0.75
-    booru_min_score: float = 0.75
-    tags_to_ignore: List[str] = field(default_factory=lambda: [])
-    subject_class: str = ""
-    subject: str = ""
+    clip_max_flavors: int = 3
+    clip_use_v2: bool = False
+    crop: bool = False
+    crop_mode: str = "smart"
+    do_backup: bool = False
+    do_rename: bool = False
+    dst: str = ""
+    face_model: str = "Codeformers"
+    flip: bool = False
+    max_clip_tokens: float = 1.0
+    max_size: int = 1024
+    max_tokens: int = 75
+    min_clip_tokens: float = 0.0
+    num_beams: int = 5
+    pad: bool = False
     replace_class: bool = False
     restore_faces: bool = False
-    face_model: str = "Codeformers"
-    upscale: bool = False
-    upscale_ratio: float = 2.0
-    scaler = None
-    save_image: bool = False
     save_caption: bool = False
+    save_image: bool = False
+    src_files: List[str] = field(default_factory=lambda: [])
+    subject: str = ""
+    subject_class: str = ""
+    tags_to_ignore: List[str] = field(default_factory=lambda: [])
+    threshold: float = 0.5
+    char_threshold: float = 0.5
+    txt_action: str = "prepend"
+    upscale: bool = False
+    upscale_max: int = 4096
+    upscale_mode: str = "ratio"
+    upscale_ratio: float = 2.0
+    upscaler_1 = None
+    upscaler_2 = None
+    wd14_min_score: float = 0.75
 
     def clip_params(self):
         return {
-            "min_clip": self.min_clip,
-            "max_clip": self.max_clip,
+            "min_clip_tokens": self.min_clip_tokens,
+            "max_clip_tokens": self.max_clip_tokens,
             "use_v2": self.clip_use_v2,
             "append_flavor": self.clip_append_flavor,
             "max_flavors": self.clip_max_flavors,
@@ -57,3 +63,30 @@ class ProcessParams:
             "clip_max_flavors": self.clip_max_flavors,
             "blip_initial_prompt": self.blip_initial_prompt
         }
+
+    def pre_only(self):
+        self.caption = False
+        self.upscale = False
+        self.restore_faces = False
+
+    def cap_only(self):
+        self.upscale = False
+        self.restore_faces = False
+        self.crop = False
+        self.pad = False
+
+    def post_only(self):
+        self.caption = False
+        self.upscale = False
+        self.crop = False
+        self.pad = False
+
+
+    @classmethod
+    def from_dict(cls, d):
+        instance = cls()  # Get the singleton instance
+        for k, v in d.items():
+            k = k.replace("sp_", "")  # Adjust the attribute name
+            if hasattr(instance, k):
+                setattr(instance, k, v)
+        return instance

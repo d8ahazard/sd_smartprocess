@@ -9,8 +9,9 @@ from tqdm import tqdm
 from extensions.sd_dreambooth_extension.dreambooth.utils.utils import printm
 from extensions.sd_smartprocess import super_resolution
 from extensions.sd_smartprocess.clipcrop import CropClip
-from extensions.sd_smartprocess.clipinterrogator import ClipInterrogator
-from extensions.sd_smartprocess.interrogator import BooruInterrogator, WaifuDiffusionInterrogator
+from extensions.sd_smartprocess.interrogators.clip_interrogator import CLIPInterrogator
+from extensions.sd_smartprocess.interrogators.interrogator import WaifuDiffusionInterrogator
+from extensions.sd_smartprocess.interrogators.booru_interrogator import BooruInterrogator
 from modules import shared
 
 # Base processor
@@ -40,8 +41,8 @@ class ClipProcessor(Processor):
             clip_append_flavor,
             clip_append_trending,
             num_beams,
-            min_clip,
-            max_clip,
+            min_clip_tokens,
+            max_clip_tokens,
             max_flavors
     ):
         self.description = "Processing CLIP"
@@ -50,7 +51,7 @@ class ClipProcessor(Processor):
 
         self.max_flavors = max_flavors
         shared.state.textinfo = "Loading CLIP Model..."
-        self.model = ClipInterrogator(
+        self.model = CLIPInterrogator(
             clip_use_v2,
             clip_append_artist,
             clip_append_medium,
@@ -58,8 +59,8 @@ class ClipProcessor(Processor):
             clip_append_flavor,
             clip_append_trending,
             num_beams,
-            min_clip,
-            max_clip
+            min_clip_tokens,
+            max_clip_tokens
         )
         super().__init__()
 
@@ -256,7 +257,7 @@ class SystemUpscaleProcessor(Processor):
         shared.state.job_count = len(images)
         shared.state.textinfo = f"{self.description}..."
         for img in tqdm(images, desc=self.description):
-            res = self.model.scaler.upscale(img, self.upscale_ratio, self.model.data_path)
+            res = self.model.upscaler_1.upscale(img, self.upscale_ratio, self.model.data_path)
             img = res
             shared.state.current_image = img
             shared.state.job_no += 1

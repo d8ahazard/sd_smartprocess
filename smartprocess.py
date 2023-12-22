@@ -1,21 +1,21 @@
 import os
+import re
 import sys
 import traceback
 from io import StringIO
+from math import sqrt
 from pathlib import Path
 from typing import Union, Dict, List
 
 import numpy as np
-from PIL import Image, features, ImageOps
+from PIL import Image, features
 from tqdm import tqdm
 
 import modules.codeformer_model
 import modules.gfpgan_model
 from clipcrop import CropClip
-from extensions.sd_smartprocess.blipinterrogator import BlipInterrogator
-from extensions.sd_smartprocess.clipinterrogator import ClipInterrogator
-from extensions.sd_smartprocess.interrogator import WaifuDiffusionInterrogator, BooruInterrogator
-from extensions.sd_smartprocess.llava_interrogator import LLAVAInterrogator
+from extensions.sd_smartprocess.interrogators.clip_interrogator import CLIPInterrogator
+from extensions.sd_smartprocess.interrogators.interrogator import InterrogatorRegistry
 from extensions.sd_smartprocess.model_download import disable_safe_unpickle, enable_safe_unpickle
 from extensions.sd_smartprocess.process_params import ProcessParams
 from modules import shared, images
@@ -29,6 +29,48 @@ global_unpickler = None
 def printi(message):
     shared.state.textinfo = message
     print(message)
+
+
+def get_backup_path(file_path, params: ProcessParams):
+    backup_path = file_path
+    if params.do_backup:
+        file_base = os.path.splitext(file_path)[0]
+        file_ext = os.path.splitext(file_path)[1]
+        backup_index = 0
+        backup_path = f"{file_base}_backup{backup_index}{file_ext}"
+        if os.path.exists(backup_path):
+            while os.path.exists(backup_path):
+                backup_index += 1
+                backup_path = f"{file_base}_backup{backup_index}{file_ext}"
+    return file_path, backup_path
+
+
+def save_pic(img, src_name, img_index, params: ProcessParams):
+    dest_dir = os.path.dirname(src_name)
+    if params.do_rename:
+        basename = f"{img_index:05}"
+    else:
+        src_name, backup_name = get_backup_path(src_name, params)
+        if src_name != backup_name and os.path.exists(src_name):
+            os.rename(src_name, backup_name)
+        basename = os.path.splitext(os.path.basename(src_name))[0]
+
+    shared.state.current_image = img
+    dest = os.path.join(dest_dir, f"{basename}.png")
+    img.save(dest)
+    return dest
+
+
+def save_img_caption(image_path: str, img_caption: str, params: ProcessParams):
+    basename = os.path.splitext(image_path)[0]
+    dest = f"{basename}.txt"
+    src_name, backup_name = get_backup_path(dest, params)
+    if src_name != backup_name and os.path.exists(src_name):
+        os.rename(src_name, backup_name)
+    if img_caption is not None and len(img_caption) > 0:
+        with open(src_name, "w", encoding="utf8") as file:
+            file.write(src_name)
+    return src_name
 
 
 def list_features():
@@ -78,45 +120,12 @@ def load_system():
         pass
 
 
-def get_clip_interrogator(clip_params: Dict):
-    clip_use_v2 = clip_params["use_v2"]
-    clip_append_artist = clip_params["append_artist"]
-    clip_append_medium = clip_params["append_medium"]
-    clip_append_movement = clip_params["append_movement"]
-    clip_append_flavor = clip_params["append_flavor"]
-    clip_append_trending = clip_params["append_trending"]
-    num_beams = clip_params["num_beams"]
-    min_clip = clip_params["min_clip"]
-    max_clip = clip_params["max_clip"]
-    clip_max_flavors = clip_params["clip_max_flavors"]
-    blip_initial_prompt = clip_params["blip_initial_prompt"]
+def get_clip_interrogator(params: ProcessParams):
     global clip_interrogator
     if clip_interrogator is None:
-        clip_interrogator = ClipInterrogator(clip_use_v2,
-                                             clip_append_artist,
-                                             clip_append_medium,
-                                             clip_append_movement,
-                                             clip_append_flavor,
-                                             clip_append_trending,
-                                             num_beams,
-                                             min_clip,
-                                             max_clip,
-                                             clip_max_flavors,
-                                             blip_initial_prompt)
+        clip_interrogator = CLIPInterrogator(params)
     else:
-        clip_interrogator.use_v2 = clip_use_v2
-        clip_interrogator.append_artist = clip_append_artist
-        clip_interrogator.append_medium = clip_append_medium
-        clip_interrogator.append_movement = clip_append_movement
-        clip_interrogator.append_flavor = clip_append_flavor
-        clip_interrogator.append_trending = clip_append_trending
-        clip_interrogator.num_beams = num_beams
-        clip_interrogator.min_clip = min_clip
-        clip_interrogator.max_clip = max_clip
-        clip_interrogator.max_flavors = clip_max_flavors
-        clip_interrogator.blip_initial_prompt = blip_initial_prompt
-        clip_interrogator.set_model_type(clip_use_v2)
-    clip_interrogator.unload()
+        clip_interrogator.unload()
     return clip_interrogator
 
 
@@ -132,141 +141,102 @@ def get_crop_clip():
     return crop_clip
 
 
-def get_image_interrogators(interrogators: Dict[str, bool], clip_params: Dict, booru_score: float, wd14_score: float):
+def get_image_interrogators(params: ProcessParams):
     global image_interrogators
-    print(f"Interrogators: {interrogators}")
-    caption_blip = interrogators.get("BLIP", False)
-    caption_clip = interrogators.get("CLIP", False)
-    caption_deepbooru = interrogators.get("DeepDanbooru", False)
-    caption_wd14 = interrogators.get("WD14", False)
-    caption_llava = interrogators.get("LLAVA", False)
-    # caption_mplug_2 = interrogators.get("MPLUG2", False)
+    all_interrogators = InterrogatorRegistry.get_all_interrogators()
+    interrogators = params.captioners
     caption_agents = []
-    if caption_blip:
-        if "BLIP" not in image_interrogators:
-            printi("\rLoading BLIP interrogator...")
-            blip_interrogator = BlipInterrogator(
-                clip_params.get("blip_initial_prompt", "a caption for this image is: "))
-            image_interrogators["BLIP"] = blip_interrogator
-        else:
-            blip_interrogator = image_interrogators["BLIP"]
-        caption_agents.append(blip_interrogator)
-    if caption_clip:
-        caption_agents.append(get_clip_interrogator(clip_params))
-    if caption_deepbooru:
-        if "DeepDanbooru" not in image_interrogators:
-            printi("\rLoading Deepbooru interrogator...")
-            db_interrogator = BooruInterrogator(booru_score)
-            image_interrogators["DeepDanbooru"] = db_interrogator
-        else:
-            image_interrogators["DeepDanbooru"].min_score = booru_score
-            db_interrogator = image_interrogators["DeepDanbooru"]
-        db_interrogator.unload()
-        caption_agents.append(db_interrogator)
-    if caption_wd14:
-        if "WD14" not in image_interrogators:
-            printi("\rLoading wd14 interrogator...")
-            wd_interrogator = WaifuDiffusionInterrogator(min_score=wd14_score)
-            image_interrogators["WD14"] = wd_interrogator
-        else:
-            image_interrogators["WD14"].min_score = wd14_score
-            wd_interrogator = image_interrogators["WD14"]
-        wd_interrogator.unload()
-        caption_agents.append(wd_interrogator)
-    if caption_llava:
-        if "LLAVA" not in image_interrogators:
-            printi("\rLoading LLAVA interrogator...")
-            llava_interrogator = LLAVAInterrogator()
-            image_interrogators["LLAVA"] = llava_interrogator
-        else:
-            llava_interrogator = image_interrogators["LLAVA"]
-        llava_interrogator.unload()
-        caption_agents.append(llava_interrogator)
-    # if caption_mplug_2:
-    #     if "MPLUG2" not in image_interrogators:
-    #         printi("\rLoading MPLUG2 interrogator...")
-    #         mplug_2_interrogator = MPLUG2Interrrogator()
-    #     else:
-    #         mplug_2_interrogator = image_interrogators["MPLUG2"]
-    #     mplug_2_interrogator.unload()
-    #     caption_agents.append(mplug_2_interrogator)
+    print(f"Interrogators: {interrogators}")
+    for interrogator_name, enable in interrogators.items():
+        if enable:
+            if interrogator_name not in image_interrogators:
+                printi(f"\rLoading {interrogator_name} interrogator...")
+                if interrogator_name == "Clip":
+                    interrogator = get_clip_interrogator(params.clip_params())
+                else:
+                    interrogator = all_interrogators[f"{interrogator_name}Interrogator"](params)
+                image_interrogators[interrogator_name] = interrogator
+            else:
+                interrogator = image_interrogators[interrogator_name]
+            interrogator.unload()
+            caption_agents.append(interrogator)
+
     return caption_agents
 
 
-def build_caption(image, caption_array, tags_to_ignore, caption_length, subject_class, subject, replace_class,
+def clean_string(s):
+    """
+    Remove non-alphanumeric characters except spaces, and normalize spacing.
+    Args:
+        s: The string to clean.
+
+    Returns: A cleaned string.
+    """
+    # Remove non-alphanumeric characters except spaces
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', s)
+    # Check for a sentence with just the same word repeated
+    if len(set(cleaned.split())) == 1:
+        cleaned = cleaned.split()[0]
+    # Replace multiple spaces with a single space
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_class, subject, replace_class,
                   txt_action="append"):
+    """
+    Build a caption from an array of captions, optionally ignoring tags, optionally replacing a class name with a subject name.
+    Args:
+        image: the image path, used for existing caption txt file
+        captions_list: A list of generated captions
+        tags_to_ignore: A comma-separated list of tags to ignore
+        caption_length: The maximum number of tags to include in the caption
+        subject_class: The class name to replace
+        subject: The subject name to replace the class name with
+        replace_class: Whether to replace the class name with the subject name
+        txt_action: What to do with the existing caption, if any
+
+    Returns: A string containing the caption
+    """
     # Read existing caption from path/txt file
     existing_caption_txt_filename = os.path.splitext(image)[0] + '.txt'
+    existing_caption_txt = ''
     if os.path.exists(existing_caption_txt_filename):
         with open(existing_caption_txt_filename, 'r', encoding="utf8") as file:
             existing_caption_txt = file.read()
     else:
-        existing_caption_txt = ''.join(c for c in image if c.isalpha() or c in [" ", ", "])
+        existing_caption_txt = clean_string(os.path.basename(image).rstrip('.jpg.jpeg.png.gif'))
 
-    all_tags = []
-    for cap in caption_array:
-        tags = cap.split(",")
-        for tag in tags:
-            stripped = tag.strip()
-            if stripped not in all_tags:
-                all_tags.append(stripped)
-    # Remove duplicates, filter dumb stuff
-    chars_to_strip = ["_\\("]
-    unique_tags = []
-    ignore_tags = []
-    if tags_to_ignore != "" and tags_to_ignore is not None:
-        si_tags = tags_to_ignore.split(",")
-        for tag in si_tags:
-            ignore_tags.append(tag.strip)
+    all_tags = set()
+    for cap in captions_list:
+        all_tags.update({clean_string(tag) for tag in cap.split(",") if tag.strip()})
 
-    for tag in all_tags:
-        if tag not in unique_tags and "_\(" not in tag and tag not in ignore_tags:
-            unique_tags.append(tag.strip())
+    if isinstance(tags_to_ignore, str):
+        tags_to_ignore = tags_to_ignore.split(",")
+    # Filter out ignored tags
+    ignore_tags = set(clean_string(tag) for tag in tags_to_ignore if tag.strip())
+    all_tags.difference_update(ignore_tags)
 
-    existing_tags = existing_caption_txt.split(",")
+    # Handling existing caption based on txt_action
+    existing_tags = set(clean_string(tag) for tag in existing_caption_txt.split(",") if tag.strip())
+    if txt_action == "prepend":
+        all_tags = existing_tags.union(all_tags)
+    elif txt_action == 'append':
+        all_tags = all_tags.union(existing_tags)
+    elif txt_action == 'copy':
+        all_tags = existing_tags
 
-    if txt_action == "prepend" and len(existing_tags):
-        new_tags = existing_tags
-        for tag in unique_tags:
-            if not tag in new_tags:
-                new_tags.append(tag)
-        unique_tags = new_tags
+    # Replace class with subject
+    if replace_class and subject and subject_class:
+        all_tags = {tag.replace(clean_string(subject_class), clean_string(subject)) for tag in all_tags}
 
-    if txt_action == 'append' and len(existing_tags):
-        for tag in existing_tags:
-            if not tag in unique_tags:
-                unique_tags.append(tag)
+    # Limiting caption length
+    tags_list = list(all_tags)
+    if caption_length and len(tags_list) > caption_length:
+        tags_list = tags_list[:caption_length]
 
-    if txt_action == 'copy' and existing_caption_txt:
-        for tag in existing_tags:
-            unique_tags.append(tag.strip())
-
-    caption_txt = ", ".join(unique_tags)
-
-    if replace_class and subject is not None and subject_class is not None:
-        # Find and replace "a SUBJECT CLASS" in caption_txt with subject name
-        if f"a {subject_class}" in caption_txt:
-            caption_txt = caption_txt.replace(f"a {subject_class}", subject)
-
-        if subject_class in caption_txt:
-            caption_txt = caption_txt.replace(subject_class, subject)
-
-    tags = caption_txt.split(" ")
-
-    if caption_length != 0 and len(tags) > caption_length:
-        tags = tags[0:caption_length]
-        tags[-1] = tags[-1].rstrip(",")
-    caption_txt = " ".join(tags)
+    caption_txt = ", ".join(tags_list)
     return caption_txt
-
-
-def save_img_caption(image, img_caption):
-    basename = os.path.splitext(image)[0]
-    dest = f"{basename}.txt"
-    if img_caption is not None and len(img_caption) > 0:
-        with open(dest, "w", encoding="utf8") as file:
-            file.write(dest)
-    return dest
 
 
 def calculate_job_length(files, crop, caption, captioners, flip, restore_faces, upscale):
@@ -285,82 +255,168 @@ def calculate_job_length(files, crop, caption, captioners, flip, restore_faces, 
     return job_length
 
 
-def process_cropping(files, dest, clip_params, crop, pad, max_size, flip, do_rename, save=False) -> Union[
-    List[str], List[Image.Image]]:
+def crop_smart(img: Image, interrogator: CLIPInterrogator, cc: CropClip, params: ProcessParams):
+    short_caption = interrogator.interrogate(img, params, short=True)
+    im_data = cc.get_center(img, prompt=short_caption)
+    crop_width = im_data[1] - im_data[0]
+    center_x = im_data[0] + (crop_width / 2)
+    crop_height = im_data[3] - im_data[2]
+    center_y = im_data[2] + (crop_height / 2)
+    crop_ratio = crop_width / crop_height
+    dest_ratio = 1
+    tgt_width = crop_width
+    tgt_height = crop_height
+
+    if crop_ratio != dest_ratio:
+        if crop_width > crop_height:
+            tgt_height = crop_width / dest_ratio
+            tgt_width = crop_width
+        else:
+            tgt_width = crop_height / dest_ratio
+            tgt_height = crop_height
+
+        # Reverse the above if dest is too big
+        if tgt_width > img.width or tgt_height > img.height:
+            if tgt_width > img.width:
+                tgt_width = img.width
+                tgt_height = tgt_width / dest_ratio
+            else:
+                tgt_height = img.height
+                tgt_width = tgt_height / dest_ratio
+
+    tgt_height = int(tgt_height)
+    tgt_width = int(tgt_width)
+    left = max(center_x - (tgt_width / 2), 0)
+    right = min(center_x + (tgt_width / 2), img.width)
+    top = max(center_y - (tgt_height / 2), 0)
+    bottom = min(center_y + (tgt_height / 2), img.height)
+    img = img.crop((left, top, right, bottom))
+    return img
+
+
+def crop_center(img: Image, max_size: int):
+    ratio = 1
+    src_ratio = img.width / img.height
+
+    src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
+    src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
+
+    resized = images.resize_image(0, img, src_w, src_h)
+    res = Image.new("RGB", (max_size, max_size))
+    res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
+    img = res
+    return img
+
+
+def crop_empty(img: Image):
+    # Convert PIL Image to OpenCV format
+    open_cv_image = np.array(img)
+    open_cv_image = open_cv_image[:, :, ::-1].copy()  # Convert RGB to BGR
+
+    # Function to check if the border is uniform
+    def is_uniform_border(border_slice):
+        # Check if all pixels in the slice are the same
+        return np.all(border_slice == border_slice[0, 0, :])
+
+    # Check top, bottom, left, right borders
+    h, w, _ = open_cv_image.shape
+    top_border = open_cv_image[0:1, :]
+    bottom_border = open_cv_image[h - 1:h, :]
+    left_border = open_cv_image[:, 0:1]
+    right_border = open_cv_image[:, w - 1:w]
+
+    # Compare opposite borders to ensure they match
+    top_matches_bottom = is_uniform_border(top_border) and is_uniform_border(bottom_border) and np.all(
+        top_border == bottom_border)
+    left_matches_right = is_uniform_border(left_border) and is_uniform_border(right_border) and np.all(
+        left_border == right_border)
+
+    # Find the padding sizes
+    top_pad = 0
+    bottom_pad = 0
+    left_pad = 0
+    right_pad = 0
+
+    if top_matches_bottom:
+        while top_pad < h and is_uniform_border(open_cv_image[top_pad:top_pad + 1, :]):
+            top_pad += 1
+        while bottom_pad < h and is_uniform_border(open_cv_image[h - bottom_pad - 1:h - bottom_pad, :]):
+            bottom_pad += 1
+
+    if left_matches_right:
+        while left_pad < w and is_uniform_border(open_cv_image[:, left_pad:left_pad + 1]):
+            left_pad += 1
+        while right_pad < w and is_uniform_border(open_cv_image[:, w - right_pad - 1:w - right_pad]):
+            right_pad += 1
+
+    # Crop the image
+    cropped_image = open_cv_image[top_pad:h - bottom_pad, left_pad:w - right_pad]
+
+    # Convert back to PIL Image
+    cropped_image = Image.fromarray(cropped_image[:, :, ::-1])  # Convert BGR to RGB
+
+    return cropped_image
+
+
+def crop_contain(img, params: ProcessParams):
+    ratio = 1
+    src_ratio = img.width / img.height
+
+    src_w = params.max_size if ratio < src_ratio else img.width * params.max_size // img.height
+    src_h = params.max_size if ratio >= src_ratio else img.height * params.max_size // img.width
+
+    resized = images.resize_image(0, img, src_w, src_h)
+    res = Image.new("RGB", (params.max_size, params.max_size))
+    res.paste(resized, box=(params.max_size // 2 - src_w // 2, params.max_size // 2 - src_h // 2))
+    img = res
+    return img
+
+
+def process_pre(files, params: ProcessParams) -> Union[List[str], List[Image.Image]]:
     output = []
-    interrogator = get_clip_interrogator(clip_params)
-    cc = get_crop_clip()
+    interrogator = None
+    cc = None
+    if params.crop and params.crop_mode == "smart":
+        interrogator = get_clip_interrogator(params.clip_params())
+        cc = get_crop_clip()
     total_files = len(files)
     crop_length = 0
-    if crop:
+    if params.crop:
         crop_length += total_files
-    if flip:
-        crop_length += total_files
-    if pad:
+    if params.pad:
         crop_length += total_files
     pbar = tqdm(total=crop_length, desc="Processing images")
     for file in files:
         img = Image.open(file).convert("RGB")
-        if crop:
-            short_caption = interrogator.interrogate(img, short=True)
-            im_data = cc.get_center(img, prompt=short_caption)
-            crop_width = im_data[1] - im_data[0]
-            center_x = im_data[0] + (crop_width / 2)
-            crop_height = im_data[3] - im_data[2]
-            center_y = im_data[2] + (crop_height / 2)
-            crop_ratio = crop_width / crop_height
-            dest_ratio = 1
-            tgt_width = crop_width
-            tgt_height = crop_height
-
-            if crop_ratio != dest_ratio:
-                if crop_width > crop_height:
-                    tgt_height = crop_width / dest_ratio
-                    tgt_width = crop_width
-                else:
-                    tgt_width = crop_height / dest_ratio
-                    tgt_height = crop_height
-
-                # Reverse the above if dest is too big
-                if tgt_width > img.width or tgt_height > img.height:
-                    if tgt_width > img.width:
-                        tgt_width = img.width
-                        tgt_height = tgt_width / dest_ratio
-                    else:
-                        tgt_height = img.height
-                        tgt_width = tgt_height / dest_ratio
-
-            tgt_height = int(tgt_height)
-            tgt_width = int(tgt_width)
-            left = max(center_x - (tgt_width / 2), 0)
-            right = min(center_x + (tgt_width / 2), img.width)
-            top = max(center_y - (tgt_height / 2), 0)
-            bottom = min(center_y + (tgt_height / 2), img.height)
-            img = img.crop((left, top, right, bottom))
+        if params.crop:
+            if params.crop_mode == "smart":
+                img = crop_smart(img, interrogator, cc, params)
+            elif params.crop_mode == "center":
+                img = crop_center(img, params.max_size)
+            elif params.crop_mode == "empty":
+                img = crop_empty(img)
+            elif params.crop_mode == "contain":
+                img = crop_contain(img, params)
             shared.state.current_image = img
             pbar.update(1)
             shared.state.job_no += 1
 
-        if pad:
+        if params.pad:
             ratio = 1
             src_ratio = img.width / img.height
 
-            src_w = max_size if ratio < src_ratio else img.width * max_size // img.height
-            src_h = max_size if ratio >= src_ratio else img.height * max_size // img.width
+            src_w = params.max_size if ratio < src_ratio else img.width * params.max_size // img.height
+            src_h = params.max_size if ratio >= src_ratio else img.height * params.max_size // img.width
 
             resized = images.resize_image(0, img, src_w, src_h)
-            res = Image.new("RGB", (max_size, max_size))
-            res.paste(resized, box=(max_size // 2 - src_w // 2, max_size // 2 - src_h // 2))
+            res = Image.new("RGB", (params.max_size, params.max_size))
+            res.paste(resized, box=(params.max_size // 2 - src_w // 2, params.max_size // 2 - src_h // 2))
             img = res
             pbar.update(1)
             shared.state.job_no += 1
 
-        if flip:
-            img = ImageOps.flip(img)
-            pbar.update(1)
-            shared.state.job_no += 1
-        if save:
-            img_path = save_pic(img, file, dest, len(output), do_rename)
+        if params.save_image:
+            img_path = save_pic(img, file, len(output), params)
             output.append(img_path)
         else:
             output.append(img)
@@ -369,15 +425,21 @@ def process_cropping(files, dest, clip_params, crop, pad, max_size, flip, do_ren
     return output
 
 
-def process_captions(files, captioners, caption_length, clip_params, wd14_min_score, booru_min_score, tags_to_ignore,
-                     subject_class, subject, replace_class, txt_action, save_captions) -> Dict[str, str]:
+def process_captions(files, params: ProcessParams) -> Dict[str, str]:
     caption_dict = {}
+    caption_length = params.max_tokens
+    tags_to_ignore = params.tags_to_ignore
+    subject_class = params.subject_class
+    subject = params.subject
+    replace_class = params.replace_class
+    txt_action = params.txt_action
+    save_captions = params.save_caption
 
-    interrogators = get_image_interrogators(captioners, clip_params, booru_min_score, wd14_min_score)
+    agents = get_image_interrogators(params)
     total_files = len(files)
-    total_captions = total_files * len(interrogators)
+    total_captions = total_files * len(agents)
     pbar = tqdm(total=total_captions, desc="Captioning images")
-    for caption_agent in interrogators:
+    for caption_agent in agents:
         print(f"Captioning with {caption_agent.__class__.__name__}...")
         caption_agent.load()
         for image_to_caption in files:
@@ -385,7 +447,7 @@ def process_captions(files, captioners, caption_length, clip_params, wd14_min_sc
             if image_to_caption not in caption_dict:
                 caption_dict[image_to_caption] = []
             try:
-                caption_out = caption_agent.interrogate(img)
+                caption_out = caption_agent.interrogate(img, params)
                 print(f"Caption for {image_to_caption}: {caption_out}")
                 caption_dict[image_to_caption].append(caption_out)
                 pbar.update(1)
@@ -401,27 +463,36 @@ def process_captions(files, captioners, caption_length, clip_params, wd14_min_sc
                                        replace_class, txt_action)
         output_dict[image_path] = caption_string
         if save_captions:
-            save_img_caption(image_path, caption_string)
+            save_img_caption(image_path, caption_string, params)
     return output_dict
 
 
-def process_post(files, dest, restore_faces, face_model, upscale, upscale_ratio, scaler, save=False) -> Union[
+def process_post(files, params: ProcessParams) -> Union[
     List[str], List[Image.Image]]:
     output = []
     total_files = len(files)
     total_post = 0
-    if restore_faces:
+    if params.restore_faces:
         total_post += total_files
 
-    if upscale:
+    if params.upscale:
         total_post += total_files
     pbar = tqdm(total=total_post, desc="Post-processing images")
+    params.do_rename = False
+    upscalers = []
+
+    if params.upscale:
+        shared.state.textinfo = "Upscaling..."
+        if params.upscaler_1 is not None:
+            upscalers.append(params.upscaler_1)
+        if params.upscaler_2 is not None:
+            upscalers.append(params.upscaler_2)
 
     for file in files:
         img = Image.open(file).convert("RGB")
-        if restore_faces:
-            shared.state.textinfo = f"Restoring faces using {face_model}..."
-            if face_model == "gfpgan":
+        if params.restore_faces:
+            shared.state.textinfo = f"Restoring faces using {params.face_model}..."
+            if params.face_model == "gfpgan":
                 restored_img = modules.gfpgan_model.gfpgan_fix_faces(np.array(img, dtype=np.uint8))
                 img = Image.fromarray(restored_img)
             else:
@@ -432,217 +503,46 @@ def process_post(files, dest, restore_faces, face_model, upscale, upscale_ratio,
             shared.state.job_no += 1
             shared.state.current_image = img
 
-        if upscale:
+        if params.upscale:
             shared.state.textinfo = "Upscaling..."
-            upscaler = shared.sd_upscalers[scaler]
-            res = upscaler.scaler.upscale(img, upscale_ratio, upscaler.data_path)
-            img = res
-            pbar.update(1)
-            shared.state.job_no += 1
-            shared.state.current_image = img
 
-        if save:
-            img_path = save_pic(img, file, dest, len(output))
+            # Calculate the upscale factor
+            if params.upscale_mode == "Size":
+                upscale_to_max = params.max_size
+                desired_upscale = max(upscale_to_max / img.width, upscale_to_max / img.height)
+            else:
+                desired_upscale = params.upscale_ratio
+
+            # Adjust the upscale factor if two upscalers are used
+            if len(upscalers) == 2:
+                upscale_by = sqrt(desired_upscale)
+            else:
+                upscale_by = desired_upscale
+
+            # Apply each upscaler sequentially
+            for scaler_name in upscalers:
+                upscaler = shared.sd_upscalers[scaler_name]
+                img = upscaler.upscale(img, upscale_by, upscaler.data_path)
+                upscaler.unload()
+                pbar.update(1)
+                shared.state.job_no += 1
+                shared.state.current_image = img
+
+        if params.save_image:
+            img_path = save_pic(img, file, 0, params)
             output.append(img_path)
         else:
             output.append(img)
+    for scaler in upscalers:
+        try:
+            del scaler
+        except:
+            pass
     return output
 
 
-def save_pic(img, src_name, dst, img_index, do_rename=False, flipped=False):
-    if do_rename:
-        basename = f"{img_index:05}"
-    else:
-        basename = os.path.splitext(src_name)[0]
-        if flipped:
-            basename += "_flipped"
-
-    shared.state.current_image = img
-    dest = os.path.join(dst, f"{basename}.png")
-    img.save(dest)
-    return dest
-
-
-def caption_images(src_files,
-                   captioners,
-                   blip_initial_prompt,
-                   caption_length,
-                   txt_action,
-                   num_beams,
-                   min_clip,
-                   max_clip,
-                   clip_use_v2,
-                   clip_append_flavor,
-                   clip_max_flavors,
-                   clip_append_medium,
-                   clip_append_movement,
-                   clip_append_artist,
-                   clip_append_trending,
-                   wd14_min_score,
-                   booru_min_score,
-                   tags_to_ignore,
-                   subject_class,
-                   subject,
-                   replace_class,
-                   save_output: bool = False
-                   ):
-    params = ProcessParams()
-    params.src_files = src_files
-    params.caption = True
-    params.captioners = captioners
-    params.blip_initial_prompt = blip_initial_prompt
-    params.caption_length = caption_length
-    params.txt_action = txt_action
-    params.num_beams = num_beams
-    params.min_clip = min_clip
-    params.max_clip = max_clip
-    params.clip_use_v2 = clip_use_v2
-    params.clip_append_flavor = clip_append_flavor
-    params.clip_max_flavors = clip_max_flavors
-    params.clip_append_medium = clip_append_medium
-    params.clip_append_movement = clip_append_movement
-    params.clip_append_artist = clip_append_artist
-    params.clip_append_trending = clip_append_trending
-    params.wd14_min_score = wd14_min_score
-    params.booru_min_score = booru_min_score
-    params.tags_to_ignore = tags_to_ignore
-    params.subject_class = subject_class
-    params.subject = subject
-    params.replace_class = replace_class
-    params.save_caption = save_output
-
-    try:
-        return do_process(params)
-    except Exception as e:
-        traceback.print_exc()
-        msg = f"Error processing images: {e}"
-        printi(msg)
-        return [], {}, msg
-
-
-def process_images(rename, src_files, dst, pad, crop, max_size, flip, save_output: bool = False):
-    params = ProcessParams()
-    params.rename = rename
-    params.src_files = src_files
-    params.dst = dst
-    params.pad = pad
-    params.crop = crop
-    params.max_size = max_size
-    params.flip = flip
-    params.save_image = save_output
-    try:
-        return do_process(params)
-    except Exception as e:
-        traceback.print_exc()
-        msg = f"Error processing images: {e}"
-        printi(msg)
-        return [], {}, msg
-
-
-def postprocess_images(src_files, dst, restore_faces, face_model, upscale, upscale_ratio, scaler,
-                       save_output: bool = False):
-    params = ProcessParams()
-    params.src_files = src_files
-    params.dst = dst
-    params.restore_faces = restore_faces
-    params.face_model = face_model
-    params.upscale = upscale
-    params.upscale_ratio = upscale_ratio
-    params.scaler = scaler
-    params.save_image = save_output
-    try:
-        return do_process(params)
-    except Exception as e:
-        traceback.print_exc()
-        msg = f"Error processing images: {e}"
-        printi(msg)
-        return [], {}, msg
-
-
-def process_all(rename,
-                src,
-                dst,
-                pad,
-                crop,
-                size,
-                txt_action,
-                flip,
-                caption,
-                captioners,
-                caption_length,
-                blip_initial_prompt,
-                num_beams,
-                min_clip,
-                max_clip,
-                clip_use_v2,
-                clip_append_flavor,
-                clip_max_flavors,
-                clip_append_medium,
-                clip_append_movement,
-                clip_append_artist,
-                clip_append_trending,
-                wd14_min_score,
-                booru_min_score,
-                tags_to_ignore,
-                subject_class,
-                subject,
-                replace_class,
-                restore_faces,
-                face_model,
-                upscale,
-                upscale_ratio,
-                scaler):
-    params = ProcessParams()
-    params.rename = rename
-    # Walk the source directory and get all files
-    params.src_files = []
-    for root, dirs, files in os.walk(src):
-        for file in files:
-            if is_image(file):
-                params.src_files.append(os.path.join(root, file))
-    params.dst = dst
-    params.pad = pad
-    params.crop = crop
-    params.max_size = size
-    params.txt_action = txt_action
-    params.flip = flip
-    params.blip_initial_prompt = blip_initial_prompt
-    params.caption = caption
-    params.captioners = captioners
-    params.caption_length = caption_length
-    params.num_beams = num_beams
-    params.min_clip = min_clip
-    params.max_clip = max_clip
-    params.clip_use_v2 = clip_use_v2
-    params.clip_append_flavor = clip_append_flavor
-    params.clip_max_flavors = clip_max_flavors
-    params.clip_append_medium = clip_append_medium
-    params.clip_append_movement = clip_append_movement
-    params.clip_append_artist = clip_append_artist
-    params.clip_append_trending = clip_append_trending
-    params.wd14_min_score = wd14_min_score
-    params.booru_min_score = booru_min_score
-    params.tags_to_ignore = tags_to_ignore
-    params.subject_class = subject_class
-    params.subject = subject
-    params.replace_class = replace_class
-    params.restore_faces = restore_faces
-    params.face_model = face_model
-    params.upscale = upscale
-    params.upscale_ratio = upscale_ratio
-    params.scaler = scaler
-    params.save_image = True
-    params.save_caption = True
-    try:
-        return do_process(params)
-    except Exception as e:
-        traceback.print_exc()
-        msg = f"Error processing images: {e}"
-        printi(msg)
-        return [], {}, msg
-
-
 def do_process(params: ProcessParams):
+    print(f"Processing with params: {params}")
     outputs = []
     caption_dict = {}
 
@@ -657,43 +557,26 @@ def do_process(params: ProcessParams):
         if job_length == 0:
             msg = "Nothing to do."
             printi(msg)
-            return outputs, msg
+            return outputs, {}, msg
 
         unload_system()
         do_preprocess = params.pad or params.crop or params.flip
         do_postprocess = params.restore_faces or params.upscale
-        src = os.path.abspath(os.path.dirname(params.src_files[0]))
-        if params.dst is None or params.dst == "":
-            params.dst = os.path.dirname(src) + "_processed"
-        params.dst = os.path.abspath(params.dst)
-
-        if src == params.dst:
-            msg = "Source and destination are the same, returning."
-            printi(msg)
-            return outputs, msg
-
-        os.makedirs(params.dst, exist_ok=True)
 
         shared.state.textinfo = "Initializing smart processing..."
         shared.state.job_count = job_length
         shared.state.job_no = 0
-
+        out_images = params.src_files
         if do_preprocess:
-            out_images = process_cropping(params.src_files, params.dst, clip_params, params.crop, params.pad,
-                                          params.max_size, params.flip, params.rename, save=params.save_image)
+            out_images = process_pre(out_images, params)
         else:
             out_images = params.src_files
 
         if params.caption:
-            caption_dict = process_captions(out_images, params.captioners, params.caption_length, clip_params,
-                                            params.wd14_min_score,
-                                            params.booru_min_score, params.tags_to_ignore, params.subject_class,
-                                            params.subject, params.replace_class,
-                                            params.txt_action, save_captions=params.save_caption)
+            caption_dict = process_captions(out_images, params)
 
         if do_postprocess:
-            out_images = process_post(out_images, params.dst, params.restore_faces, params.face_model, params.upscale,
-                                      params.upscale_ratio, params.scaler, save=params.save_image)
+            out_images = process_post(out_images, params)
         outputs = out_images
 
         return out_images, caption_dict, f"Successfully processed {len(out_images)} images."

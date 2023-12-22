@@ -5,13 +5,13 @@ from typing import Dict
 
 import torch
 from PIL import Image
-from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer
 
-from extensions.sd_smartprocess.interrogator import Interrogator
+from extensions.sd_smartprocess.interrogators.interrogator import Interrogator
 from extensions.sd_smartprocess.model_download import fetch_model
-from modules.paths_internal import models_path
-from mplug_owl import MplugOwlImageProcessor, MplugOwlProcessor, MplugOwlForConditionalGeneration
+from extensions.sd_smartprocess.mplug_owl import MplugOwlForConditionalGeneration, MplugOwlImageProcessor, \
+    MplugOwlProcessor
+from extensions.sd_smartprocess.process_params import ProcessParams
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 class LLAVAInterrogator(Interrogator):
     model = None
     processor = None
+    params = {"max_tokens": 75}
 
-    def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(self, params: ProcessParams):
+        super().__init__(params)
         print("Initializing LLM model...")
         model_path = fetch_model('MAGAer13/mplug-owl-llama-7b', "llm")
         model_config = os.path.join(model_path, "config.json")
@@ -39,24 +40,22 @@ class LLAVAInterrogator(Interrogator):
         self.processor = MplugOwlProcessor(self.image_processor, self.tokenizer)
         logger.debug("Initialized LLM model.")
 
-    def interrogate(self, image: Image, params: Dict = None, unload: bool = False):
-        self._to_gpu()
-        raw_image = image.convert('RGB')
+    def interrogate(self, image: Image, params=None, unload: bool = False) -> str:
+        self.load()
         if params is None:
             params = {}
-        character = params.get("character", "nsfw")
-        char_file = os.path.join(os.path.dirname(__file__), "mplug_owl", "characters", f"{character}.txt")
-        with open(char_file, "r") as f:
-            character = f.read().strip()
-
+        raw_image = image.convert('RGB')
+        max_tokens = params.get("max_tokens", 77)
         generate_kwargs = {
             'do_sample': True,
             'top_k': 5,
-            'max_length': 77
+            'max_length': max_tokens,
         }
 
         images = [raw_image]
-        prompts = [character]
+        prompts = ["Human: <image>",
+                   "Human: Give a short one sentence caption for this image with NO punctuation. DO NOT USE ANY PUNCTUATION OR COMMAS. DO NOT USE COMMAS!!!",
+                   f"AI:"]
 
         logger.debug("Processing inputs...")
         inputs = self.processor(text=prompts, images=images, return_tensors='pt')

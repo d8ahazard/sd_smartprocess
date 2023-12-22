@@ -8,7 +8,8 @@ from PIL import Image
 from huggingface_hub import snapshot_download
 from transformers import TextStreamer
 
-from extensions.sd_smartprocess.interrogator import Interrogator
+from extensions.sd_smartprocess.interrogators.interrogator import Interrogator
+from extensions.sd_smartprocess.process_params import ProcessParams
 from modules.paths_internal import models_path
 from mplug_owl2.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
 from mplug_owl2.conversation import conv_templates
@@ -16,15 +17,18 @@ from mplug_owl2.mm_utils import KeywordsStoppingCriteria, tokenizer_image_token,
     get_model_name_from_path
 from mplug_owl2.model.builder import load_pretrained_model
 
+# This is basically broken until we can update transformers in AUTO past the current version supported
+
 logger = logging.getLogger(__name__)
 
 
 class MPLUG2Interrogator(Interrogator):
     model = None
     processor = None
+    params = {"max_tokens": 75}
 
-    def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    def __init__(self, params: ProcessParams):
+        super().__init__(params)
         logger.debug("Initializing LLM model...")
         pretrained_ckpt = 'MAGAer13/mplug-owl2-llama2-7b'
         scripts_dir = os.path.join(models_path, "llm")
@@ -43,9 +47,11 @@ class MPLUG2Interrogator(Interrogator):
         self._to_cpu()
         logger.debug("Initialized LLM model.")
 
-    def interrogate(self, image: Image, params: Dict = None, unload: bool = False):
-        self._to_gpu()
-        query = "Describe the image."
+    def interrogate(self, image: Image, params=None, unload: bool = False) -> str:
+        self.load()
+        if params is None:
+            params = {}
+        query = params.get("query", "Describe the image.")
 
         conv = conv_templates["mplug_owl2"].copy()
         roles = conv.roles
