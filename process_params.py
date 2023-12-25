@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import List, Dict
 
+from extensions.sd_smartprocess.file_manager import ImageData
+
 
 @dataclass
 class ProcessParams:
@@ -33,7 +35,7 @@ class ProcessParams:
     restore_faces: bool = False
     save_caption: bool = False
     save_image: bool = False
-    src_files: List[str] = field(default_factory=lambda: [])
+    src_files: List[ImageData] = field(default_factory=lambda: [])
     subject: str = ""
     subject_class: str = ""
     tags_to_ignore: List[str] = field(default_factory=lambda: [])

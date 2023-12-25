@@ -1,10 +1,12 @@
 import os
+import shutil
 import sys
 from importlib import import_module
 
 import gradio as gr
 
 from extensions.sd_smartprocess import smartprocess
+from extensions.sd_smartprocess.file_manager import FileManager, ImageData
 from extensions.sd_smartprocess.interrogators.interrogator import InterrogatorRegistry
 from extensions.sd_smartprocess.process_params import ProcessParams
 from extensions.sd_smartprocess.smartprocess import is_image, get_backup_path
@@ -13,29 +15,12 @@ from modules.call_queue import wrap_gradio_gpu_call, wrap_gradio_call
 from modules.ui import setup_progressbar
 from modules.upscaler import Upscaler
 
-refresh_symbol = "\U0001f504"  # 🔄
+refresh_symbol = "\U0001f4c2"  # 📂
 delete_symbol = "\U0001F5D1"  # 🗑️
 
+file_manager = FileManager()
 # This holds all the inputs for the Smart Process tab
-all_inputs = []
-# Input keys
-input_keys = []
-
-# This one holds all files loaded from user path, shown in the first gallery
-all_files = []
-
-# This one holds the files for the secondary gallery
-selected_files = []
-
-# This holds the filtered content of the gallery
-filtered_files = []
-
-# Captions for the first gallery
-all_captions = []
-# Captions for the second gallery
-selected_captions = []
-# This holds the files that will be processed
-process_targets = []
+inputs_dict = {}
 
 # This holds the accordions for the captioners
 accordion_keys = []
@@ -44,17 +29,7 @@ captioner_accordions = []
 # Sort all the tags by frequency
 tags_dict = {}
 
-# Tags to include when filtering
-filter_tags_include = []
-# Tags to exclude when filtering
-filter_tags_exclude = []
-
-# Only include tags that contain these strings
-filter_string_include = []
-# Exclude tags that contain these strings
-filter_string_exclude = []
-
-current_image = None
+current_image: ImageData = None
 current_caption = None
 
 # The list of processors to run
@@ -110,6 +85,7 @@ def list_scalers():
 
 def generate_caption_section():
     global captioner_accordions
+    global inputs_dict
     wolf_params = {}
     for gator, gator_params in int_dict.items():
         accordion_name = gator.replace("Interrogator", "")
@@ -143,9 +119,7 @@ def generate_caption_section():
                             continue
                         temp_element = gr.Textbox(label=label, value=param_value, interactive=True)
                     if temp_element:
-                        all_inputs.append(temp_element)
-                        input_keys.append(param)
-                        setattr(temp_element, "do_not_save_to_config", True)
+                        inputs_dict[param] = temp_element
         captioner_accordions.append(temp_accordion)
         accordion_keys.append(accordion_name)
     show_accordion = False
@@ -173,22 +147,21 @@ def generate_caption_section():
                         continue
                     temp_element = gr.Textbox(label=label, value=param_value, interactive=True)
                 if temp_element:
-                    all_inputs.append(temp_element)
-                    input_keys.append(param)
                     setattr(temp_element, "do_not_save_to_config", True)
+                    inputs_dict[param] = temp_element
+    # Sort all_inputs and input_keys
     captioner_accordions.append(temp_accordion)
     accordion_keys.append(accordion_name)
 
 
 def sort_tags_dict():
     global tags_dict
-    global filter_tags_include
-    global filter_tags_exclude
+    global file_manager
     # Sort the tags into a list by frequency
     sorted_tags = sorted(tags_dict.items(), key=lambda x: x[1], reverse=True)
     tag_options = []
     for tag in sorted_tags:
-        if tag[0] in filter_tags_include or tag[0] in filter_tags_exclude:
+        if tag[0] in file_manager.included_tags or tag[0] in file_manager.excluded_tags:
             continue
         tag_name = tag[0]
         tag_label = f"{tag_name} ({tag[1]})"
@@ -200,13 +173,9 @@ def create_process_ui():
     """Create the UI for the Smart Process tab"""
     global tag_captioners
     global natural_captioners
-    global all_inputs
-    global input_keys
+    global inputs_dict
     global captioner_accordions
-    global filter_tags_include
-    global filter_tags_exclude
-    global filter_string_include
-    global filter_string_exclude
+    global file_manager
     list_scalers()
     with gr.Blocks() as sp_interface:
         with gr.Row(equal_height=True):
@@ -243,24 +212,26 @@ def create_process_ui():
                         with gr.Row():
                             with gr.Column():
                                 sp_filter_string_include_group = gr.CheckboxGroup(label="Included Strings",
-                                                                                  choices=filter_string_include,
-                                                                                  value=filter_string_include,
+                                                                                  choices=file_manager.included_strings,
+                                                                                  value=file_manager.included_strings,
                                                                                   interactive=True)
                             with gr.Column():
                                 sp_filter_string_exclude_group = gr.CheckboxGroup(label="Excluded Strings",
-                                                                                  choices=filter_string_exclude,
-                                                                                  value=filter_string_exclude,
+                                                                                  choices=file_manager.excluded_strings,
+                                                                                  value=file_manager.excluded_strings,
                                                                                   interactive=True)
 
                         with gr.Row():
                             with gr.Column():
                                 sp_include_tag_group = gr.CheckboxGroup(label="Included Tags",
-                                                                        choices=filter_tags_include,
-                                                                        value=filter_tags_include, interactive=True)
+                                                                        choices=file_manager.included_tags,
+                                                                        value=file_manager.included_tags,
+                                                                        interactive=True)
                             with gr.Column():
                                 sp_exclude_tag_group = gr.CheckboxGroup(label="Excluded Tags",
-                                                                        choices=filter_tags_exclude,
-                                                                        value=filter_tags_exclude, interactive=True)
+                                                                        choices=file_manager.excluded_tags,
+                                                                        value=file_manager.excluded_tags,
+                                                                        interactive=True)
 
         with gr.Row(equal_height=False):
             with gr.Column(variant="panel", scale=1):
@@ -431,57 +402,71 @@ def create_process_ui():
                 outputs=[sp_crop_row, sp_cap_row, sp_post_row]
             )
 
-        def get_current_image():
-            files = []
-            if current_image:
-                # If current image is a tuple, select the first element
-                if isinstance(current_image, tuple):
-                    image_path = current_image[0]
+        def process_outputs(params: ProcessParams, current=False, selected=False):
+            global file_manager
+            global current_image
+            image_data, output = smartprocess.do_process(params)
+            file_manager.update_files(image_data)
+            if current:
+                if len(image_data) > 0:
+                    current_image = image_data[0]                    
+                    return gr.update(value=current_image.get_image()), gr.update(value=current_image.caption), gr.update(value=output)
                 else:
-                    image_path = current_image
-                files.append(image_path)
-            return files
+                    return gr.update(value=None), gr.update(value=None), gr.update(value=output)
+            elif selected:
+                images = file_manager.filtered_and_selected_files(True)
+                return gr.update(value=images), gr.update(value=output)
+            else:
+                images = file_manager.filtered_files(True)
+                selected_files = file_manager.filtered_and_selected_files(True)
+                return gr.update(value=images), gr.update(value=output), gr.update(
+                    value=selected_files)
 
         def pre_process_current(*args):
+            global current_image
             params = params_to_dict(*args)
-            params.src_files = get_current_image()
+            params.src_files = [current_image]
             params.pre_only()
             params.save_image = False
-            return smartprocess.do_process(params)
+            return process_outputs(params, current=True)
 
         def caption_current(*args):
+            global current_image
             cap_params = params_to_dict(*args)
-            cap_params.src_files = get_current_image()
+            cap_params.src_files = [current_image]
             cap_params.save_caption = False
             cap_params.cap_only()
-            outputs, caption_dict, msg = start_caption(cap_params)
+            outputs, caption_dict, msg = start_caption(cap_params, current=True)
             caption = ""
             # Get the first key from the caption dict
             if len(caption_dict) > 0:
                 captions = list(caption_dict.values())
                 caption = captions[0]
-            return gr.update(visible=False), gr.update(value=caption), gr.update(value=msg)
+            image = outputs[0] if len(outputs) > 0 else None
+            # TODO: Update the stored image/caption pairs here
+            return gr.update(value=image), gr.update(value=caption), gr.update(value=msg)
 
         def post_process_current(*args):
+            global current_image
             post_params = params_to_dict(*args)
-            post_params.src_files = get_current_image()
+            post_params.src_files = [current_image]
             post_params.post_only()
             post_params.save_image = False
-            return smartprocess.do_process(post_params)
+            return process_outputs(post_params, current=True)
 
         def process_selected(*args):
-            global selected_files
+            global file_manager
             params = params_to_dict(*args)
-            params.src_files = selected_files
-            return smartprocess.do_process(params)
+            params.src_files = file_manager.filtered_and_selected_files()
+            return process_outputs(params, selected=True)
 
         def process_all(*args):
-            global filtered_files
+            global file_manager
             params = params_to_dict(*args)
-            params.src_files = filtered_files
-            return smartprocess.do_process(params)
+            params.src_files = file_manager.filtered_files()
+            return process_outputs(params)
 
-        def start_caption(params: ProcessParams):
+        def start_caption(params: ProcessParams, current=False, selected=False):
             params.captioners = tag_captioners
             params.crop = False
             params.pad = False
@@ -489,47 +474,9 @@ def create_process_ui():
             params.restore_faces = False
             params.caption = True
             if len(params.src_files) > 0:
-                # Make sure files in src_files are not tuples
-                files = []
-                for file in params.src_files:
-                    if isinstance(file, tuple):
-                        files.append(file[0])
-                    else:
-                        files.append(file)
-                params.src_files = files
-                outputs, caption_dict, msg = smartprocess.do_process(params)
-                return outputs, caption_dict, msg
-
-        def start_preprocess(params: ProcessParams):
-            params.captioners = {}
-            params.scale = False
-            params.restore_faces = False
-            if len(params.src_files) > 0:
-                # Make sure files in src_files are not tuples
-                files = []
-                for file in params.src_files:
-                    if isinstance(file, tuple):
-                        files.append(file[0])
-                    else:
-                        files.append(file)
-                outputs, caption_dict, msg = smartprocess.do_process(params)
-                return outputs, caption_dict, msg
-
-        def start_postprocess(params: ProcessParams):
-            params.captioners = {}
-            params.crop = False
-            params.pad = False
-            params.caption = False
-            if len(params.src_files) > 0:
-                # Make sure files in src_files are not tuples
-                files = []
-                for file in params.src_files:
-                    if isinstance(file, tuple):
-                        files.append(file[0])
-                    else:
-                        files.append(file)
-                outputs, caption_dict, msg = smartprocess.do_process(params)
-                return outputs, caption_dict, msg
+                return process_outputs(params, current=current, selected=selected)
+            else:
+                return gr.update(value=None), gr.update(value=None), gr.update(value="No images selected")
 
         def process_tags(captions):
             global tags_dict
@@ -544,49 +491,19 @@ def create_process_ui():
                         tags_dict[tag] += 1
 
         def clear_globals():
-            global all_files
-            global all_captions
-            global selected_files
-            global selected_captions
-            global filter_tags_include
-            global filter_tags_exclude
-            global filter_string_include
-            global filter_string_exclude
+            global file_manager
             global current_image
-            global current_caption
-
-            all_files = []
-            all_captions = []
-            selected_files = []
-            selected_captions = []
-            filter_tags_include = []
-            filter_tags_exclude = []
-            filter_string_include = []
-            filter_string_exclude = []
+            file_manager.clear()
             current_image = None
-            current_caption = None
 
         def load_src(src_path):
             # Enumerate all files recursively in src_path, and if they're an image, add them to the gallery
-            global all_files
-            global all_captions
-            clear_globals()
-            for root, dirs, files in os.walk(src_path):
-                for file in files:
-                    filename = os.path.join(root, file)
-                    if is_image(filename):
-                        existing_caption_txt_filename = os.path.splitext(filename)[0] + '.txt'
-                        if os.path.exists(existing_caption_txt_filename):
-                            with open(existing_caption_txt_filename, 'r', encoding="utf8") as f:
-                                existing_caption_txt = f.read()
-                        else:
-                            file = os.path.splitext(file)[0]
-                            existing_caption_txt = ''.join(c for c in file if c.isalpha() or c in [" ", ", "])
-                        all_captions.append(existing_caption_txt)
-                        all_files.append((filename, existing_caption_txt))
-            process_tags(all_captions)
+            global file_manager
+            file_manager.file_path = src_path
+            file_manager.load_files()
+            process_tags(file_manager.all_captions())
             tag_group = gr.update(choices=sort_tags_dict(), value="")
-
+            all_files = file_manager.filtered_files(True)
             print(f"Found {len(all_files)} images in {src_path}")
             outputs = [gr.update(value=all_files), tag_group]
             # Enumerate all elements in elements_to_clear except for the first two
@@ -596,203 +513,123 @@ def create_process_ui():
 
         def set_all_current(evt: gr.SelectData):
             global current_image
+            global file_manager
             if evt.selected:
-                files = filter_gallery(True)
+                files = file_manager.filtered_files(False)
                 current_image = files[evt.index]
-                return gr.update(value=current_image[0]), gr.update(value=current_image[1])
+                return gr.update(value=current_image.image_path), gr.update(value=current_image.caption)
             else:
                 return gr.update(value=None), gr.update(value=None)
 
         def set_selected_current(evt: gr.SelectData):
             global current_image
+            global file_manager
             if evt.selected:
-                files = filter_gallery(False)
+                files = file_manager.filtered_files(False)
                 current_image = files[evt.index]
-                return gr.update(value=current_image[0]), gr.update(value=current_image[1])
+                return gr.update(value=current_image.image_path), gr.update(value=current_image.caption)
             else:
                 return gr.update(value=None), gr.update(value=None)
 
         def add_selected():
-            global selected_files
             global current_image
-            if current_image and current_image not in selected_files:
-                selected_files.append(current_image)
+            global file_manager
+            if current_image and not current_image.selected:
+                current_image.selected = True
+                file_manager.update_file(current_image)
+            selected_files = file_manager.filtered_and_selected_files(True)
             return gr.update(value=selected_files)
 
         def remove_selected():
-            global selected_files
+            global file_manager
             global current_image
-            if current_image and current_image in selected_files:
-                selected_files.remove(current_image)
+            if current_image and current_image.selected:
+                current_image.selected = False
+                file_manager.update_file(current_image)
+            selected_files = file_manager.filtered_and_selected_files(True)
             return gr.update(value=selected_files)
 
         def clear_selected():
-            global selected_files
+            global file_manager
             global current_image
             current_image = None
-            selected_files = []
+            all_files = file_manager.all_files()
+            for file in all_files:
+                file.selected = False
+            file_manager.update_files(all_files)
+            selected_files = file_manager.filtered_and_selected_files(True)
             return gr.update(value=selected_files)
 
         def select_all():
-            global selected_files
-            files = filter_gallery(True)
-            for file in files:
-                if file not in selected_files:
-                    selected_files.append(file)
-            return gr.update(value=files)
+            global file_manager
+            all_files = file_manager.filtered_files()
+            for file in all_files:
+                file.selected = True
+            file_manager.update_files(all_files)
+            all_files = file_manager.filtered_files(True)
+            return gr.update(value=all_files)
 
         def params_to_dict(*args):
-            global input_keys
+            global inputs_dict
+            input_keys = list(inputs_dict.keys())
             pp = list(args)
             params_dict = dict(zip(input_keys, pp))
             pp = ProcessParams().from_dict(params_dict)
             return pp
 
-        import re
-
-        def filter_gallery(use_all_files: bool):
-            """
-            Filters a collection of files based on specified inclusion and exclusion criteria for tags and filter strings.
-
-            The function filters files based on tags extracted from file captions and matches these tags against specified
-            inclusion and exclusion criteria. The criteria can be a set of plain tags, wildcard patterns, or regex expressions.
-
-            Parameters:
-            - use_all_files (bool): Determines whether to filter from all files or only selected files.
-              If True, filters from all files; otherwise, filters from selected files.
-
-            Globals:
-            - filter_tags_include (list): Tags required to include a file.
-            - filter_tags_exclude (list): Tags that lead to exclusion of a file.
-            - filter_string_include (list): Filter strings for inclusion; supports wildcards and regex.
-            - filter_string_exclude (list): Filter strings for exclusion; supports wildcards and regex.
-            - all_files (list): List of all files, where each file is a tuple (filename, caption).
-            - selected_files (list): List of selected files, where each file is a tuple (filename, caption).
-
-            Returns:
-            - filtered_files (list): List of files filtered based on the specified criteria.
-
-            Examples:
-            1. Plain Tag Matching:
-               - To include files with a tag 'holiday', add 'holiday' to filter_tags_include.
-               - To exclude files with a tag 'work', add 'work' to filter_tags_exclude.
-
-            2. Wildcard Patterns:
-               - To include files with tags starting with 'trip', add 'trip*' to filter_string_include.
-               - To exclude files with tags ending with '2023', add '*2023' to filter_string_exclude.
-
-            3. Regex Expressions:
-               - To include files with tags that have any number followed by 'days', add '\\d+days' to filter_string_include.
-               - To exclude files with tags formatted like dates (e.g., '2023-04-01'), add '\\d{4}-\\d{2}-\\d{2}' to filter_string_exclude.
-
-            Note:
-            - The function treats tags as case-sensitive.
-            - Wildcard '*' matches any sequence of characters (including none).
-            - Regex patterns should follow Python's 're' module syntax.
-            """
-            global filter_tags_include, filter_tags_exclude
-            global filter_string_include, filter_string_exclude
-            global all_files, selected_files, tags_dict
-
-            def matches_pattern(pattern, string):
-                # Convert wildcard to regex if necessary
-                if '*' in pattern:
-                    pattern = '^' + pattern.replace('*', '.*') + '$'
-                    return re.match(pattern, string) is not None
-                else:
-                    if " " not in pattern:
-                        parts = string.split(" ")
-                        return pattern in parts
-                    else:
-                        return pattern in string
-
-            def should_include(tag, filter_tags, filter_strings):
-                if len(filter_tags) == 0 and len(filter_strings) == 0:
-                    return True
-                tag_match = False
-                filter_match = False
-                if tag in filter_tags and len(filter_tags) > 0:
-                    tag_match = True
-                if len(filter_strings) > 0:
-                    for filter_string in filter_strings:
-                        if matches_pattern(filter_string, tag):
-                            filter_match = True
-                            break
-                return tag_match or filter_match
-
-            def should_exclude(tag, filter_tags, filter_strings):
-                if tag in filter_tags:
-                    return True
-                for filter_string in filter_strings:
-                    if matches_pattern(filter_string, tag):
-                        return True
-                return False
-
-            filtered = []
-            files = all_files if use_all_files else selected_files
-
-            for file in files:
-                caption = file[1]
-                tags = [tag.strip() for tag in caption.split(",")]
-                out_tags = []
-                for tag in tags:
-                    include = True
-                    if should_exclude(tag, filter_tags_exclude, filter_string_exclude):
-                        include = False
-                    elif not should_include(tag, filter_tags_include, filter_string_include):
-                        include = False
-                    if include:
-                        out_tags.append(tag)
-                if len(out_tags) > 0:
-                    filtered.append(file)
-
-            return filtered
-
         def include_tag(tag_dropdown_value):
-            global filter_tags_include
+            global file_manager
+            included_tags = file_manager.included_tags
             tag_dropdown_value = tag_dropdown_value.split(" (")[0]
-            if tag_dropdown_value not in filter_tags_include:
-                filter_tags_include.append(tag_dropdown_value)
+            if tag_dropdown_value not in included_tags:
+                included_tags.append(tag_dropdown_value)
             # Sort filter_tags_include by frequency, then alphabetically, ensuring we only add the values in filter_tags_include
-            filter_tags_include = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
-                                   x[0] in filter_tags_include]
-
+            included_tags = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
+                             x[0] in included_tags]
+            file_manager.included_tags = included_tags
+            file_manager.update_filters()
             tag_group = gr.update(choices=sort_tags_dict(), value="")
-            all_gallery_items = filter_gallery(True)
-            selected_gallery_items = filter_gallery(False)
-            return tag_group, gr.update(value=filter_tags_include, choices=filter_tags_include), gr.update(
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_files(True)
+            return tag_group, gr.update(value=included_tags, choices=included_tags), gr.update(
                 value=all_gallery_items), gr.update(value=selected_gallery_items)
 
         def exclude_tag(tag_dropdown_value):
-            global filter_tags_exclude
+            global file_manager
+            excluded_tags = file_manager.excluded_tags
             tag_dropdown_value = tag_dropdown_value.split(" (")[0]
-            if tag_dropdown_value not in filter_tags_exclude:
-                filter_tags_exclude.append(tag_dropdown_value)
+            if tag_dropdown_value not in excluded_tags:
+                excluded_tags.append(tag_dropdown_value)
             # Sort filter_tags_exclude by frequency, then alphabetically
-            filter_tags_exclude = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
-                                   x[0] in filter_tags_exclude]
+            excluded_tags = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
+                             x[0] in excluded_tags]
+            file_manager.excluded_tags = excluded_tags
+            file_manager.update_filters()
             tag_group = gr.update(choices=sort_tags_dict(), value="")
-            all_gallery_items = filter_gallery(True)
-            selected_gallery_items = filter_gallery(False)
-            return tag_group, gr.update(value=filter_tags_exclude, choices=filter_tags_exclude), gr.update(
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
+            return tag_group, gr.update(value=excluded_tags, choices=excluded_tags), gr.update(
                 value=all_gallery_items), gr.update(value=selected_gallery_items)
 
         def remove_include_tag(select_data: gr.SelectData):
-            global filter_tags_include
-            if select_data.selected:
-                filter_tags_include.append(select_data.value)
-            else:
-                filter_tags_include.remove(select_data.value)
-            filter_tags_include = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
-                                   x[0] in filter_tags_include]
-            all_gallery_items = filter_gallery(True)
-            selected_gallery_items = filter_gallery(False)
-            return gr.update(choices=sort_tags_dict(), value=""), gr.update(value=filter_tags_include,
-                                                                            choices=filter_tags_include), gr.update(
+            global file_manager
+            included_tags = file_manager.included_tags
+
+            if not select_data.selected:
+                included_tags.remove(select_data.value)
+            included_tags = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
+                             x[0] in included_tags]
+            file_manager.included_tags = included_tags
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
+            return gr.update(choices=sort_tags_dict(), value=""), gr.update(value=included_tags,
+                                                                            choices=included_tags), gr.update(
                 value=all_gallery_items), gr.update(value=selected_gallery_items)
 
         def remove_exclude_tag(select_data: gr.SelectData):
-            global filter_tags_exclude
+            global file_manager
+            filter_tags_exclude = file_manager.excluded_tags
             if select_data.selected:
                 filter_tags_exclude.append(select_data.value)
             else:
@@ -800,49 +637,71 @@ def create_process_ui():
             # Sort filter tags alphabetically
             filter_tags_exclude = [x[0] for x in sorted(tags_dict.items(), key=lambda x: (-x[1], x[0])) if
                                    x[0] in filter_tags_exclude]
-            all_gallery_items = filter_gallery(True)
-            selected_gallery_items = filter_gallery(False)
+            file_manager.excluded_tags = filter_tags_exclude
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
             return gr.update(choices=sort_tags_dict(), value=""), gr.update(value=filter_tags_exclude,
                                                                             choices=filter_tags_exclude), gr.update(
                 value=all_gallery_items), gr.update(value=selected_gallery_items)
 
         def include_string(string_group_value):
-            global filter_string_include
+            global file_manager
+            filter_string_include = file_manager.included_strings
             if string_group_value not in filter_string_include:
                 filter_string_include.append(string_group_value)
             # Sort filter_string_include alphabetically
             filter_string_include = sorted(filter_string_include)
+            file_manager.included_strings = filter_string_include
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
             return gr.update(value=filter_string_include, choices=filter_string_include), gr.update(
-                value=filter_gallery(True)), gr.update(value=filter_gallery(False)), gr.update(value="")
+                value=all_gallery_items), gr.update(value=selected_gallery_items), gr.update(value="")
 
         def exclude_string(string_group_value):
-            global filter_string_exclude
+            global file_manager
+            filter_string_exclude = file_manager.excluded_strings
             if string_group_value not in filter_string_exclude:
                 filter_string_exclude.append(string_group_value)
             # Sort filter_string_exclude alphabetically
             filter_string_exclude = sorted(filter_string_exclude)
+            file_manager.excluded_strings = filter_string_exclude
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
             return gr.update(value=filter_string_exclude, choices=filter_string_exclude), gr.update(
-                value=filter_gallery(True)), gr.update(value=filter_gallery(False)), gr.update(value="")
+                value=all_gallery_items), gr.update(value=selected_gallery_items), gr.update(value="")
 
         def remove_include_string(select_data: gr.SelectData):
-            global filter_string_include
+            global file_manager
+            filter_string_include = file_manager.included_strings
             if select_data.selected:
                 filter_string_include.append(select_data.value)
             else:
                 filter_string_include.remove(select_data.value)
             filter_string_include = sorted(filter_string_include)
+            file_manager.included_strings = filter_string_include
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
             return gr.update(value=filter_string_include, choices=filter_string_include), gr.update(
-                value=filter_gallery(True)), gr.update(value=filter_gallery(False)), gr.update(value="")
+                value=all_gallery_items), gr.update(value=selected_gallery_items), gr.update(value="")
 
         def remove_exclude_string(select_data: gr.SelectData):
-            global filter_string_exclude
+            global file_manager
+            filter_string_exclude = file_manager.excluded_strings
             if select_data.selected:
                 filter_string_exclude.append(select_data.value)
             else:
                 filter_string_exclude.remove(select_data.value)
             filter_string_exclude = sorted(filter_string_exclude)
+            file_manager.excluded_strings = filter_string_exclude
+            file_manager.update_filters()
+            all_gallery_items = file_manager.filtered_files(True)
+            selected_gallery_items = file_manager.filtered_and_selected_files(True)
             return gr.update(value=filter_string_exclude, choices=filter_string_exclude), gr.update(
-                value=filter_gallery(True)), gr.update(value=filter_gallery(False)), gr.update(value="")
+                value=all_gallery_items), gr.update(value=selected_gallery_items), gr.update(value="")
 
         def save_current_caption(caption, do_backup=True):
             temp_params = ProcessParams()
@@ -868,41 +727,43 @@ def create_process_ui():
             temp_params.save_image = True
             global current_image
             if current_image:
-                if isinstance(current_image, tuple):
-                    image_path = current_image[0]
-                else:
-                    image_path = current_image
+                image_path = current_image.image_path
                 save_path, backup_path = get_backup_path(image_path, temp_params)
+                if save_path != backup_path:
+                    shutil.copy(image_path, backup_path)
+                current_image_element = current_image.get_image()
+                current_image_element.save(save_path)
+                return gr.update(value=save_path), gr.update(value="Image saved to " + save_path)
+            else:
+                return gr.update(value=None), gr.update(value="No image selected")
 
-        all_inputs = [
-            sp_src,
-            sp_clear_src,
-            sp_do_rename,
-            sp_pad,
-            sp_crop,
-            sp_crop_mode,
-            sp_size,
-            sp_txt_action,
-            sp_caption,
-            sp_captioners,
-            sp_tags_to_ignore,
-            sp_class,
-            sp_subject,
-            sp_replace_class,
-            sp_restore_faces,
-            sp_face_model,
-            sp_upscale,
-            sp_upscale_ratio,
-            sp_upscaler_1,
-            sp_upscaler_2,
-            sp_do_backup,
-            sp_auto_save
-        ]
+        inputs_dict = {
+            "auto_save": sp_auto_save,
+            "caption": sp_caption,
+            "captioners": sp_captioners,
+            "class": sp_class,
+            "clear_src": sp_clear_src,
+            "crop": sp_crop,
+            "crop_mode": sp_crop_mode,
+            "do_backup": sp_do_backup,
+            "do_rename": sp_do_rename,
+            "face_model": sp_face_model,
+            "pad": sp_pad,
+            "replace_class": sp_replace_class,
+            "restore_faces": sp_restore_faces,
+            "size": sp_size,
+            "src": sp_src,
+            "subject": sp_subject,
+            "tags_to_ignore": sp_tags_to_ignore,
+            "txt_action": sp_txt_action,
+            "upscale": sp_upscale,
+            "upscale_ratio": sp_upscale_ratio,
+            "upscaler_1": sp_upscaler_1,
+            "upscaler_2": sp_upscaler_2
+        }
 
-        for element in all_inputs:
-            setattr(element, "do_not_save_to_config", True)
-            var_name = [var_name for var_name, var in locals().items() if var is element]
-            input_keys.append(var_name[0])
+        def all_inputs():
+            return [x for x in inputs_dict.values()]
 
         sp_tag_include.click(
             fn=include_tag,
@@ -949,23 +810,23 @@ def create_process_ui():
         )
 
         sp_pre_current.click(
-            fn=wrap_gradio_gpu_call(pre_process_current, extra_outputs=[gr.update()]),
+            fn=wrap_gradio_call(pre_process_current),
             _js="start_smart_process",
-            inputs=all_inputs,
-            outputs=[sp_progress, sp_outcome, sp_preview]
+            inputs=all_inputs(),
+            outputs=[sp_preview, sp_current_caption, sp_outcome]
         )
 
         sp_save_current_pre.click(
             fn=save_current_image,
             inputs=[sp_do_backup, sp_do_rename],
-            outputs=[sp_outcome]
+            outputs=[sp_preview, sp_outcome]
         )
 
         sp_caption_current.click(
-            fn=wrap_gradio_call(caption_current, extra_outputs=None, add_stats=False),
+            fn=wrap_gradio_call(caption_current),
             _js="start_smart_process",
-            inputs=all_inputs,
-            outputs=[sp_progress, sp_current_caption, sp_outcome]
+            inputs=all_inputs(),
+            outputs=[sp_preview, sp_current_caption, sp_outcome]
         )
 
         sp_save_current_caption.click(
@@ -975,29 +836,29 @@ def create_process_ui():
         )
 
         sp_post_current.click(
-            fn=wrap_gradio_gpu_call(post_process_current, extra_outputs=[gr.update()]),
+            fn=wrap_gradio_call(post_process_current),
             _js="start_smart_process",
-            inputs=all_inputs,
-            outputs=[sp_progress, sp_outcome, sp_preview]
+            inputs=all_inputs(),
+            outputs=[sp_preview, sp_current_caption, sp_outcome]
         )
 
         sp_save_current_post.click(
             fn=save_current_image,
             inputs=[sp_do_backup, sp_do_rename],
-            outputs=[sp_outcome]
+            outputs=[sp_preview, sp_outcome]
         )
 
         sp_process_selected.click(
             fn=wrap_gradio_gpu_call(process_selected, extra_outputs=[gr.update()]),
             _js="start_smart_process",
-            inputs=all_inputs,
+            inputs=all_inputs(),
             outputs=[sp_current_caption]
         )
 
         sp_process_all.click(
             fn=wrap_gradio_gpu_call(process_all, extra_outputs=[gr.update()]),
             _js="start_smart_process",
-            inputs=all_inputs,
+            inputs=all_inputs(),
             outputs=[
                 sp_progress,
                 sp_outcome

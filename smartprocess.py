@@ -14,6 +14,7 @@ from tqdm import tqdm
 import modules.codeformer_model
 import modules.gfpgan_model
 from clipcrop import CropClip
+from extensions.sd_smartprocess.file_manager import ImageData
 from extensions.sd_smartprocess.interrogators.clip_interrogator import CLIPInterrogator
 from extensions.sd_smartprocess.interrogators.interrogator import InterrogatorRegistry
 from extensions.sd_smartprocess.model_download import disable_safe_unpickle, enable_safe_unpickle
@@ -182,6 +183,17 @@ def clean_string(s):
     return cleaned
 
 
+def read_caption(image):
+    existing_caption_txt_filename = os.path.splitext(image)[0] + '.txt'
+    if os.path.exists(existing_caption_txt_filename):
+        with open(existing_caption_txt_filename, 'r', encoding="utf8") as file:
+            existing_caption_txt = file.read()
+    else:
+        image_name = os.path.splitext(os.path.basename(image))[0]
+        existing_caption_txt = clean_string(image_name)
+    return existing_caption_txt
+
+
 def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_class, subject, replace_class,
                   txt_action="append"):
     """
@@ -199,13 +211,7 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
     Returns: A string containing the caption
     """
     # Read existing caption from path/txt file
-    existing_caption_txt_filename = os.path.splitext(image)[0] + '.txt'
-    existing_caption_txt = ''
-    if os.path.exists(existing_caption_txt_filename):
-        with open(existing_caption_txt_filename, 'r', encoding="utf8") as file:
-            existing_caption_txt = file.read()
-    else:
-        existing_caption_txt = clean_string(os.path.basename(image).rstrip('.jpg.jpeg.png.gif'))
+    existing_caption_txt = read_caption(image)
 
     all_tags = set()
     for cap in captions_list:
@@ -372,7 +378,7 @@ def crop_contain(img, params: ProcessParams):
     return img
 
 
-def process_pre(files, params: ProcessParams) -> Union[List[str], List[Image.Image]]:
+def process_pre(files: List[ImageData], params: ProcessParams) -> Union[List[str], List[Image.Image]]:
     output = []
     interrogator = None
     cc = None
@@ -386,8 +392,8 @@ def process_pre(files, params: ProcessParams) -> Union[List[str], List[Image.Ima
     if params.pad:
         crop_length += total_files
     pbar = tqdm(total=crop_length, desc="Processing images")
-    for file in files:
-        img = Image.open(file).convert("RGB")
+    for image_data in files:
+        img = image_data.get_image()
         if params.crop:
             if params.crop_mode == "smart":
                 img = crop_smart(img, interrogator, cc, params)
@@ -415,17 +421,22 @@ def process_pre(files, params: ProcessParams) -> Union[List[str], List[Image.Ima
             pbar.update(1)
             shared.state.job_no += 1
 
+        image_data.update_image(img)
+
         if params.save_image:
-            img_path = save_pic(img, file, len(output), params)
-            output.append(img_path)
+            img_path = save_pic(img, image_data.image_path, len(output), params)
+            image_data.image_path = img_path
+            output.append(image_data)
         else:
-            output.append(img)
-    interrogator.unload()
-    cc.unload()
+            output.append(image_data)
+    if interrogator is not None:
+        interrogator.unload()
+    if cc is not None:
+        cc.unload()
     return output
 
 
-def process_captions(files, params: ProcessParams) -> Dict[str, str]:
+def process_captions(files: List[ImageData], params: ProcessParams) -> Dict[str, str]:
     caption_dict = {}
     caption_length = params.max_tokens
     tags_to_ignore = params.tags_to_ignore
@@ -434,7 +445,7 @@ def process_captions(files, params: ProcessParams) -> Dict[str, str]:
     replace_class = params.replace_class
     txt_action = params.txt_action
     save_captions = params.save_caption
-
+    output = []
     agents = get_image_interrogators(params)
     total_files = len(files)
     total_captions = total_files * len(agents)
@@ -442,18 +453,19 @@ def process_captions(files, params: ProcessParams) -> Dict[str, str]:
     for caption_agent in agents:
         print(f"Captioning with {caption_agent.__class__.__name__}...")
         caption_agent.load()
-        for image_to_caption in files:
-            img = Image.open(image_to_caption).convert("RGB")
-            if image_to_caption not in caption_dict:
-                caption_dict[image_to_caption] = []
+        for image_data in files:
+            img = image_data.get_image()
+            image_path = image_data.image_path
+            if image_data not in caption_dict:
+                caption_dict[image_path] = []
             try:
                 caption_out = caption_agent.interrogate(img, params)
-                print(f"Caption for {image_to_caption}: {caption_out}")
-                caption_dict[image_to_caption].append(caption_out)
+                print(f"Caption for {image_path}: {caption_out}")
+                caption_dict[image_path].append(caption_out)
                 pbar.update(1)
                 shared.state.job_no += 1
             except Exception as e:
-                print(f"Exception captioning {image_to_caption}: {e}")
+                print(f"Exception captioning {image_data}: {e}")
                 traceback.print_exc()
         caption_agent.unload()
 
@@ -464,10 +476,15 @@ def process_captions(files, params: ProcessParams) -> Dict[str, str]:
         output_dict[image_path] = caption_string
         if save_captions:
             save_img_caption(image_path, caption_string, params)
-    return output_dict
+        # Find the image data object in files with the path matching image_path
+        image_data = next((image_data for image_data in files if image_data.image_path == image_path), None)
+        if image_data is not None:
+            image_data.update_caption(caption_string, False)
+            output.append(image_data)
+    return output
 
 
-def process_post(files, params: ProcessParams) -> Union[
+def process_post(files: ImageData, params: ProcessParams) -> Union[
     List[str], List[Image.Image]]:
     output = []
     total_files = len(files)
@@ -489,7 +506,7 @@ def process_post(files, params: ProcessParams) -> Union[
             upscalers.append(params.upscaler_2)
 
     for file in files:
-        img = Image.open(file).convert("RGB")
+        img = file.get_image()
         if params.restore_faces:
             shared.state.textinfo = f"Restoring faces using {params.face_model}..."
             if params.face_model == "gfpgan":
@@ -530,9 +547,9 @@ def process_post(files, params: ProcessParams) -> Union[
 
         if params.save_image:
             img_path = save_pic(img, file, 0, params)
-            output.append(img_path)
-        else:
-            output.append(img)
+            file.image_path = img_path
+        file.update_image(img, False)
+        output.append(file)
     for scaler in upscalers:
         try:
             del scaler
@@ -543,21 +560,18 @@ def process_post(files, params: ProcessParams) -> Union[
 
 def do_process(params: ProcessParams):
     print(f"Processing with params: {params}")
-    outputs = []
-    caption_dict = {}
-
+    output = params.src_files
     try:
         global clip_interrogator
         global image_interrogators
 
         job_length = calculate_job_length(params.src_files, params.crop, params.caption, params.captioners, params.flip,
                                           params.restore_faces, params.upscale)
-        clip_params = params.clip_params()
 
         if job_length == 0:
             msg = "Nothing to do."
             printi(msg)
-            return outputs, {}, msg
+            return output, {}, msg
 
         unload_system()
         do_preprocess = params.pad or params.crop or params.flip
@@ -566,23 +580,19 @@ def do_process(params: ProcessParams):
         shared.state.textinfo = "Initializing smart processing..."
         shared.state.job_count = job_length
         shared.state.job_no = 0
-        out_images = params.src_files
         if do_preprocess:
-            out_images = process_pre(out_images, params)
-        else:
-            out_images = params.src_files
+            output = process_pre(output, params)
 
         if params.caption:
-            caption_dict = process_captions(out_images, params)
+            output = process_captions(output, params)
 
         if do_postprocess:
-            out_images = process_post(out_images, params)
-        outputs = out_images
+            output = process_post(output, params)
 
-        return out_images, caption_dict, f"Successfully processed {len(out_images)} images."
+        return output, f"Successfully processed {len(output)} images."
     except Exception as e:
         traceback.print_exc()
         msg = f"Error processing images: {e}"
         printi(msg)
 
-    return outputs, caption_dict, msg
+    return output, msg
