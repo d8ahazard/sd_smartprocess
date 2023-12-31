@@ -10,7 +10,6 @@ from extensions.sd_smartprocess.process_params import ProcessParams
 
 class BLIPInterrogator(Interrogator):
     _instance = None  # Class variable to hold the singleton instance
-    params = {"max_tokens": 75, "initial_prompt": "a caption for this image is: "}
 
     def __new__(cls, params: ProcessParams):
         if cls._instance is None:
@@ -25,11 +24,8 @@ class BLIPInterrogator(Interrogator):
 
     def _init(self, params: ProcessParams):
         super().__init__(params)
-        model_path = fetch_model('Salesforce/blip2-opt-2.7b', "blip2")
-        self.processor = AutoProcessor.from_pretrained(model_path)
-        self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model.to(self.device)
+        self.model = None
+        self.processor = None
 
     def interrogate(self, image: Image, params: ProcessParams, unload: bool = False) -> str:
         self.load()
@@ -44,7 +40,17 @@ class BLIPInterrogator(Interrogator):
         return generated_text
 
     def unload(self):
-        self.model.to("cpu")
+        try:
+            self.model.to("cpu")
+        except:
+            pass
 
     def load(self):
-        self.model.to(self.device)
+        try:
+            model_path = fetch_model('Salesforce/blip2-opt-2.7b', "blip2")
+            self.processor = AutoProcessor.from_pretrained(model_path)
+            self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16)
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model.to(self.device)
+        except:
+            pass

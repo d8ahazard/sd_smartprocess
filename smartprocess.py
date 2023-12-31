@@ -1,3 +1,4 @@
+import gc
 import os
 import re
 import sys
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Union, Dict, List
 
 import numpy as np
+import torch
 from PIL import Image, features
 from tqdm import tqdm
 
@@ -101,6 +103,23 @@ def is_image(path: Union[Path, str], feats=None):
     return is_img
 
 
+def cleanup():
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        gc.collect()
+    except:
+        print("cleanup exception")
+
+
+def vram_usage():
+    if torch.cuda.is_available():
+        return torch.cuda.memory_allocated(0) / 1024 ** 3
+    else:
+        return 0
+
+
 def unload_system():
     disable_safe_unpickle()
     if shared.interrogator is not None:
@@ -109,6 +128,13 @@ def unload_system():
         shared.sd_model.to("cpu")
     except:
         pass
+    for former in modules.shared.face_restorers:
+        try:
+            former.send_model_to("cpu")
+        except:
+            pass
+    cleanup()
+    print(f"System unloaded, current VRAM usage: {vram_usage()} GB")
 
 
 def load_system():
@@ -116,7 +142,8 @@ def load_system():
     if shared.interrogator is not None:
         shared.interrogator.send_blip_to_ram()
     try:
-        shared.sd_model.to(shared.device)
+        if modules.shared.sd_model is not None:
+            modules.shared.sd_model.to(shared.device)
     except:
         pass
 
@@ -142,25 +169,24 @@ def get_crop_clip():
     return crop_clip
 
 
-def get_image_interrogators(params: ProcessParams):
+def get_image_interrogators(params: ProcessParams, all_captioners):
     global image_interrogators
     all_interrogators = InterrogatorRegistry.get_all_interrogators()
-    interrogators = params.captioners
+    interrogators = all_captioners
     caption_agents = []
     print(f"Interrogators: {interrogators}")
-    for interrogator_name, enable in interrogators.items():
-        if enable:
-            if interrogator_name not in image_interrogators:
-                printi(f"\rLoading {interrogator_name} interrogator...")
-                if interrogator_name == "Clip":
-                    interrogator = get_clip_interrogator(params.clip_params())
-                else:
-                    interrogator = all_interrogators[f"{interrogator_name}Interrogator"](params)
-                image_interrogators[interrogator_name] = interrogator
+    for interrogator_name in interrogators:
+        if interrogator_name not in image_interrogators:
+            printi(f"\rLoading {interrogator_name} interrogator...")
+            if interrogator_name == "Clip":
+                interrogator = get_clip_interrogator(params.clip_params())
             else:
-                interrogator = image_interrogators[interrogator_name]
-            interrogator.unload()
-            caption_agents.append(interrogator)
+                interrogator = all_interrogators[f"{interrogator_name}Interrogator"](params)
+            image_interrogators[interrogator_name] = interrogator
+        else:
+            interrogator = image_interrogators[interrogator_name]
+        interrogator.unload()
+        caption_agents.append(interrogator)
 
     return caption_agents
 
@@ -178,6 +204,13 @@ def clean_string(s):
     # Check for a sentence with just the same word repeated
     if len(set(cleaned.split())) == 1:
         cleaned = cleaned.split()[0]
+    words = cleaned.split()
+    words_out = []
+    for word in words:
+        if word == "y":
+            word = "a"
+        words_out.append(word)
+    cleaned = " ".join(words_out)
     # Replace multiple spaces with a single space
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
@@ -224,13 +257,11 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
     all_tags.difference_update(ignore_tags)
 
     # Handling existing caption based on txt_action
-    existing_tags = set(clean_string(tag) for tag in existing_caption_txt.split(",") if tag.strip())
-    if txt_action == "prepend":
-        all_tags = existing_tags.union(all_tags)
-    elif txt_action == 'append':
-        all_tags = all_tags.union(existing_tags)
-    elif txt_action == 'copy':
-        all_tags = existing_tags
+    if txt_action == "include":
+        existing_tags = set(clean_string(tag) for tag in existing_caption_txt.split(",") if tag.strip())
+    else:
+        existing_tags = set()
+    all_tags = all_tags.union(existing_tags)
 
     # Replace class with subject
     if replace_class and subject and subject_class:
@@ -238,6 +269,8 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
 
     # Limiting caption length
     tags_list = list(all_tags)
+    # Sort tags list by length, with the longest caption first
+    tags_list.sort(key=len, reverse=True)
     if caption_length and len(tags_list) > caption_length:
         tags_list = tags_list[:caption_length]
 
@@ -436,7 +469,7 @@ def process_pre(files: List[ImageData], params: ProcessParams) -> Union[List[str
     return output
 
 
-def process_captions(files: List[ImageData], params: ProcessParams) -> Dict[str, str]:
+def process_captions(files: List[ImageData], params: ProcessParams, all_captioners) -> Dict[str, str]:
     caption_dict = {}
     caption_length = params.max_tokens
     tags_to_ignore = params.tags_to_ignore
@@ -446,7 +479,7 @@ def process_captions(files: List[ImageData], params: ProcessParams) -> Dict[str,
     txt_action = params.txt_action
     save_captions = params.save_caption
     output = []
-    agents = get_image_interrogators(params)
+    agents = get_image_interrogators(params, all_captioners)
     total_files = len(files)
     total_captions = total_files * len(agents)
     pbar = tqdm(total=total_captions, desc="Captioning images")
@@ -456,7 +489,7 @@ def process_captions(files: List[ImageData], params: ProcessParams) -> Dict[str,
         for image_data in files:
             img = image_data.get_image()
             image_path = image_data.image_path
-            if image_data not in caption_dict:
+            if image_path not in caption_dict:
                 caption_dict[image_path] = []
             try:
                 caption_out = caption_agent.interrogate(img, params)
@@ -500,9 +533,9 @@ def process_post(files: ImageData, params: ProcessParams) -> Union[
 
     if params.upscale:
         shared.state.textinfo = "Upscaling..."
-        if params.upscaler_1 is not None:
+        if params.upscaler_1 is not None and params.upscaler_1 != "None":
             upscalers.append(params.upscaler_1)
-        if params.upscaler_2 is not None:
+        if params.upscaler_2 is not None and params.upscaler_2 != "None":
             upscalers.append(params.upscaler_2)
 
     for file in files:
@@ -522,6 +555,15 @@ def process_post(files: ImageData, params: ProcessParams) -> Union[
 
         if params.upscale:
             shared.state.textinfo = "Upscaling..."
+            print(f"Upscaling, current VRAM usage: {vram_usage()} GB")
+            scaler_dims = {}
+            for scaler_name in upscalers:
+                for scaler in shared.sd_upscalers:
+                    print(f"Scaler: {scaler.name}")
+                    if scaler.name == scaler_name:
+                        if scaler.name != "none":
+                            scaler_dims[scaler_name] = scaler.scale
+                        break
 
             # Calculate the upscale factor
             if params.upscale_mode == "Size":
@@ -535,26 +577,36 @@ def process_post(files: ImageData, params: ProcessParams) -> Union[
                 upscale_by = sqrt(desired_upscale)
             else:
                 upscale_by = desired_upscale
-
+            print(f"Upscalers: {upscalers}")
             # Apply each upscaler sequentially
+            img_prompt = None
             for scaler_name in upscalers:
-                upscaler = shared.sd_upscalers[scaler_name]
-                img = upscaler.upscale(img, upscale_by, upscaler.data_path)
-                upscaler.unload()
-                pbar.update(1)
-                shared.state.job_no += 1
-                shared.state.current_image = img
+                upscaler = None
+                for scaler in shared.sd_upscalers:
+                    print(f"Scaler: {scaler.name}")
+                    if scaler.name == scaler_name:
+                        upscaler = scaler
+                        if scaler.name == "SD4x":
+                            img_prompt = file.caption
+                        break
+                if upscaler:
+                    scaler = upscaler.scaler
+                    if img_prompt:
+                        scaler.prompt = img_prompt
+                    img = scaler.upscale(img, upscale_by, upscaler.data_path)
+                    try:
+                        scaler.unload()
+                    except:
+                        pass
+                    pbar.update(1)
+                    shared.state.job_no += 1
+                    shared.state.current_image = img
 
         if params.save_image:
             img_path = save_pic(img, file, 0, params)
             file.image_path = img_path
         file.update_image(img, False)
         output.append(file)
-    for scaler in upscalers:
-        try:
-            del scaler
-        except:
-            pass
     return output
 
 
@@ -564,14 +616,18 @@ def do_process(params: ProcessParams):
     try:
         global clip_interrogator
         global image_interrogators
+        # combine params.captioners and params.nl_captioners
+        all_captioners = params.captioners
+        for nl_captioner in params.nl_captioners:
+            all_captioners.append(nl_captioner)
 
-        job_length = calculate_job_length(params.src_files, params.crop, params.caption, params.captioners, params.flip,
+        job_length = calculate_job_length(params.src_files, params.crop, params.caption, all_captioners, params.flip,
                                           params.restore_faces, params.upscale)
 
         if job_length == 0:
             msg = "Nothing to do."
             printi(msg)
-            return output, {}, msg
+            return output, msg
 
         unload_system()
         do_preprocess = params.pad or params.crop or params.flip
@@ -584,7 +640,7 @@ def do_process(params: ProcessParams):
             output = process_pre(output, params)
 
         if params.caption:
-            output = process_captions(output, params)
+            output = process_captions(output, params, all_captioners)
 
         if do_postprocess:
             output = process_post(output, params)

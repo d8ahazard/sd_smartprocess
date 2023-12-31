@@ -101,6 +101,11 @@ class FileManager:
 
     def clear(self):
         self.files = []
+        self.included_tags = []
+        self.excluded_tags = []
+        self.included_strings = []
+        self.excluded_strings = []
+        self.current_image = None
 
     def load_files(self):
         from extensions.sd_smartprocess.smartprocess import is_image

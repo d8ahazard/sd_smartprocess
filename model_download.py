@@ -7,12 +7,14 @@ from modules.paths_internal import models_path
 from modules.safe import unsafe_torch_load, load
 
 
-def fetch_model(model_repo, model_type):
+def fetch_model(model_repo, model_type, single_file=False):
     model_dir = os.path.join(models_path, model_type)
     dest_dir = os.path.join(model_dir, model_repo.split("/")[1])
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-        snapshot_download(model_repo, repo_type="model", local_dir=dest_dir, local_dir_use_symlinks=False)
+    if not os.path.exists(dest_dir):
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_dir = snapshot_download(model_repo, repo_type="model", local_dir=dest_dir, local_dir_use_symlinks=False)
+    if single_file:
+        dest_dir = os.path.join(dest_dir, "model.onnx")
     return dest_dir
 
 

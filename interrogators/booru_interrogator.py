@@ -34,7 +34,11 @@ class BooruInterrogator(Interrogator):
         a = np.expand_dims(np.array(pic, dtype=np.float32), 0) / 255
 
         with torch.no_grad(), devices.autocast():
-            x = torch.from_numpy(a).to(devices.device)
+            # Move the model to the same device as the input tensor
+            self.model.to(devices.device)
+            # Convert input to the correct type (half-precision if needed)
+            x = torch.from_numpy(a).to(devices.device).type_as(self.model.n_Conv_0.weight)
+            # Forward pass through the model
             y = self.model(x)[0].detach().cpu().numpy()
 
         probability_dict = {}

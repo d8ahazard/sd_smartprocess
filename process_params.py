@@ -29,6 +29,7 @@ class ProcessParams:
     max_size: int = 1024
     max_tokens: int = 75
     min_clip_tokens: float = 0.0
+    nl_captioners: Dict[str, bool] = field(default_factory=lambda: [])
     num_beams: int = 5
     pad: bool = False
     replace_class: bool = False
@@ -79,7 +80,6 @@ class ProcessParams:
 
     def post_only(self):
         self.caption = False
-        self.upscale = False
         self.crop = False
         self.pad = False
 

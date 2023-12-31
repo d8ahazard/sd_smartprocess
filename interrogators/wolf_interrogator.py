@@ -19,8 +19,8 @@ MODEL_FILENAME = "model.onnx"
 LABEL_FILENAME = "selected_tags.csv"
 WOLF_PARAMS = {
     "group": "WOLF",
-    "threshold": 0.5,
-    "char_threshold": 0.5
+    "threshold": 0.75,
+    "char_threshold": 0.75
 }
 
 
@@ -175,7 +175,7 @@ def load_model(model_path, device):
     providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
     if device == "cpu":
         providers.pop(0)
-    path = fetch_model(model_path, "wolf")
+    path = fetch_model(model_path, "wolf", True)
     model = InferenceSession(path, providers=providers)
     return model
 

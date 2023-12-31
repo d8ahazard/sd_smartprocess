@@ -82,7 +82,7 @@ class CLIPInterrogator(Interrogator):
         config.blip_num_beams = params.num_beams
         config.device = self.device
         self.config = config
-        self.blip_interrogator = BLIPInterrogator(params.blip_initial_prompt)
+        self.blip_interrogator = BLIPInterrogator(params)
         self.load_clip_model()
 
     def set_model_type(self, use_v2):

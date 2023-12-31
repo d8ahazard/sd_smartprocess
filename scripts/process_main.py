@@ -59,29 +59,33 @@ wolf_captioners = ["Moat", "Swin", "Conv", "Conv2", "Vit"]
 def list_scalers():
     scaler_dir = os.path.join(shared.script_path, "extensions", "sd_smartprocess", "upscalers")
     scalers = []
-    for file in os.listdir(scaler_dir):
-        if file.endswith("_model.py"):
-            # Construct module path for import
-            module_name = f"extensions.sd_smartprocess.upscalers.{file.replace('.py', '')}"
-            imported_module = import_module(module_name)
 
-            # Add the directory to sys.path to ensure relative imports in the module work
-            module_dir = os.path.dirname(os.path.join(scaler_dir, file))
-            if module_dir not in sys.path:
-                sys.path.append(module_dir)
+    for root, dirs, files in os.walk(scaler_dir):
+        for file in files:
+            if file.endswith("_model.py"):
+                relative_path = os.path.relpath(os.path.join(root, file), scaler_dir)
+                module_name = "extensions.sd_smartprocess.upscalers." + relative_path.replace(os.sep, '.').replace('.py', '')
+                imported_module = import_module(module_name)
 
-            for name, obj in vars(imported_module).items():
-                # Check if the object is a class and a subclass of Upscaler, and has the scaler_data classmethod
-                if isinstance(obj, type) and issubclass(obj, Upscaler) and hasattr(obj, 'scaler_data'):
-                    scaler_data = obj.scaler_data()
-                    scalers.append(scaler_data)
+                module_dir = os.path.dirname(os.path.join(root, file))
+                if module_dir not in sys.path:
+                    sys.path.append(module_dir)
+
+                for name, obj in vars(imported_module).items():
+                    # Check if the object is a class and a subclass of Upscaler
+                    if isinstance(obj, type) and (issubclass(obj, Upscaler) or any(issubclass(base, Upscaler) for base in obj.__bases__)):
+                        # Create an instance of the class and get the "scalers" attribute
+                        instance = obj()
+                        if hasattr(instance, 'scalers'):
+                            for scaler_data in instance.scalers:
+                                scalers.append(scaler_data)
 
     system_scalers = shared.sd_upscalers
 
+    # Add unique scalers to the system_scalers list
     for scaler in scalers:
         if scaler.name not in [x.name for x in system_scalers]:
             system_scalers.append(scaler)
-
 
 def generate_caption_section():
     global captioner_accordions
@@ -109,7 +113,10 @@ def generate_caption_section():
                     if isinstance(param_value, bool):
                         temp_element = gr.Checkbox(label=label, value=param_value, interactive=True)
                     elif isinstance(param_value, int):
-                        temp_element = gr.Slider(label=label, value=param_value, step=1, minimum=0, maximum=100,
+                        max_value = 100
+                        if "tokens" in param:
+                            max_value = 300
+                        temp_element = gr.Slider(label=label, value=param_value, step=1, minimum=0, maximum=max_value,
                                                  interactive=True)
                     elif isinstance(param_value, float):
                         temp_element = gr.Slider(label=label, value=param_value, step=0.01, minimum=0, maximum=1,
@@ -266,7 +273,7 @@ def create_process_ui():
                                                          value=[x for x in tag_captioners.keys() if tag_captioners[x]],
                                                          interactive=True)
                         sp_txt_action = gr.Dropdown(label='Existing Caption Action', value="ignore",
-                                                    choices=["ignore", "copy", "prepend", "append"])
+                                                    choices=["ignore", "include"])
                         generate_caption_section()
                         sp_tags_to_ignore = gr.Textbox(label="Tags To Ignore", value="")
                         sp_replace_class = gr.Checkbox(label='Replace Class with Subject in Caption', value=False)
@@ -326,10 +333,10 @@ def create_process_ui():
                                                     maximum=8192)
                         sp_upscaler_1 = gr.Dropdown(label='Upscaler', elem_id="sp_scaler_1",
                                                     choices=[x.name for x in shared.sd_upscalers],
-                                                    value=shared.sd_upscalers[0].name, type="index")
+                                                    value=shared.sd_upscalers[0].name)
                         sp_upscaler_2 = gr.Dropdown(label='Upscaler', elem_id="sp_scaler_2",
                                                     choices=[x.name for x in shared.sd_upscalers],
-                                                    value=shared.sd_upscalers[0].name, type="index")
+                                                    value=shared.sd_upscalers[0].name)
 
                         def toggle_upscale_mode(evt: gr.SelectData):
                             return gr.update(visible=evt.value == "Ratio"), gr.update(visible=evt.value == "Size")
@@ -409,8 +416,9 @@ def create_process_ui():
             file_manager.update_files(image_data)
             if current:
                 if len(image_data) > 0:
-                    current_image = image_data[0]                    
-                    return gr.update(value=current_image.get_image()), gr.update(value=current_image.caption), gr.update(value=output)
+                    current_image = image_data[0]
+                    return gr.update(value=current_image.get_image()), gr.update(
+                        value=current_image.caption), gr.update(value=output)
                 else:
                     return gr.update(value=None), gr.update(value=None), gr.update(value=output)
             elif selected:
@@ -436,15 +444,7 @@ def create_process_ui():
             cap_params.src_files = [current_image]
             cap_params.save_caption = False
             cap_params.cap_only()
-            outputs, caption_dict, msg = start_caption(cap_params, current=True)
-            caption = ""
-            # Get the first key from the caption dict
-            if len(caption_dict) > 0:
-                captions = list(caption_dict.values())
-                caption = captions[0]
-            image = outputs[0] if len(outputs) > 0 else None
-            # TODO: Update the stored image/caption pairs here
-            return gr.update(value=image), gr.update(value=caption), gr.update(value=msg)
+            return process_outputs(cap_params, current=True)
 
         def post_process_current(*args):
             global current_image
@@ -708,12 +708,11 @@ def create_process_ui():
             temp_params.do_backup = do_backup
             global current_image
             if current_image:
-                if isinstance(current_image, tuple):
-                    image_path = current_image[0]
-                else:
-                    image_path = current_image
+                image_path = current_image.image_path
                 caption_txt_filename = os.path.splitext(image_path)[0] + '.txt'
-                caption_txt_filename = get_backup_path(caption_txt_filename, temp_params)
+                caption_txt_filename, caption_backup_path = get_backup_path(caption_txt_filename, temp_params)
+                if caption_txt_filename != caption_backup_path:
+                    shutil.copy(caption_txt_filename, caption_backup_path)
                 with open(caption_txt_filename, 'w', encoding="utf8") as f:
                     f.write(caption)
                 return gr.update(value="Caption saved to " + caption_txt_filename)
@@ -748,6 +747,7 @@ def create_process_ui():
             "do_backup": sp_do_backup,
             "do_rename": sp_do_rename,
             "face_model": sp_face_model,
+            "nl_captioners": sp_nl_captioners,
             "pad": sp_pad,
             "replace_class": sp_replace_class,
             "restore_faces": sp_restore_faces,

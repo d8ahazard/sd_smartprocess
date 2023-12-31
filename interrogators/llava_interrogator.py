@@ -1,7 +1,6 @@
 import gc
 import logging
 import os
-from typing import Dict
 
 import torch
 from PIL import Image
@@ -45,7 +44,7 @@ class LLAVAInterrogator(Interrogator):
         if params is None:
             params = {}
         raw_image = image.convert('RGB')
-        max_tokens = params.get("max_tokens", 77)
+        max_tokens = params.max_tokens
         generate_kwargs = {
             'do_sample': True,
             'top_k': 5,
