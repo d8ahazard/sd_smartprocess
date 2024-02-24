@@ -29,6 +29,7 @@ class ProcessParams:
     max_size: int = 1024
     max_tokens: int = 75
     min_clip_tokens: float = 0.0
+    new_caption: str = ""
     nl_captioners: Dict[str, bool] = field(default_factory=lambda: [])
     num_beams: int = 5
     pad: bool = False
@@ -42,7 +43,7 @@ class ProcessParams:
     tags_to_ignore: List[str] = field(default_factory=lambda: [])
     threshold: float = 0.5
     char_threshold: float = 0.5
-    txt_action: str = "prepend"
+    txt_action: str = "ignore"
     upscale: bool = False
     upscale_max: int = 4096
     upscale_mode: str = "ratio"
@@ -50,6 +51,7 @@ class ProcessParams:
     upscaler_1 = None
     upscaler_2 = None
     wd14_min_score: float = 0.75
+    image_path = None
 
     def clip_params(self):
         return {

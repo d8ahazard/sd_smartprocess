@@ -233,7 +233,7 @@ def read_caption(image):
 
 
 def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_class, subject, replace_class,
-                  txt_action="append"):
+                  txt_action="ignore"):
     """
     Build a caption from an array of captions, optionally ignoring tags, optionally replacing a class name with a subject name.
     Args:
@@ -248,8 +248,6 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
 
     Returns: A string containing the caption
     """
-    # Read existing caption from path/txt file
-    existing_caption_txt = read_caption(image)
 
     all_tags = set()
     for cap in captions_list:
@@ -263,6 +261,9 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
 
     # Handling existing caption based on txt_action
     if txt_action == "include":
+        # Read existing caption from path/txt file
+        existing_caption_txt = read_caption(image)
+
         existing_tags = set(clean_string(tag) for tag in existing_caption_txt.split(",") if tag.strip())
     else:
         existing_tags = set()
@@ -492,12 +493,19 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
         print(f"Captioning with {caption_agent.__class__.__name__}...")
         caption_agent.load()
         for image_data in files:
+            temp_params = params
             img = image_data.get_image()
+            temp_params.image_path = image_data.image_path
             image_path = image_data.image_path
             if image_path not in caption_dict:
                 caption_dict[image_path] = []
             try:
-                caption_out = caption_agent.interrogate(img, params)
+                # If the agent is mplug2, build the current caption
+                if caption_agent.__class__.__name__ == "MPLUG2Interrogator":
+                    print("Building caption for mplug2")
+                    temp_params.new_caption = build_caption(image_path, caption_dict[image_path], tags_to_ignore, caption_length,
+                                                            subject_class, subject, replace_class, txt_action)
+                caption_out = caption_agent.interrogate(img, temp_params)
                 print(f"Caption for {image_path}: {caption_out}")
                 caption_dict[image_path].append(caption_out)
                 pbar.update(1)

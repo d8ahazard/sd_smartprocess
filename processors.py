@@ -10,7 +10,6 @@ from extensions.sd_dreambooth_extension.dreambooth.utils.utils import printm
 from extensions.sd_smartprocess import super_resolution
 from extensions.sd_smartprocess.clipcrop import CropClip
 from extensions.sd_smartprocess.interrogators.clip_interrogator import CLIPInterrogator
-from extensions.sd_smartprocess.interrogators.interrogator import WaifuDiffusionInterrogator
 from extensions.sd_smartprocess.interrogators.booru_interrogator import BooruInterrogator
 from modules import shared
 
@@ -109,32 +108,6 @@ class BooruProcessor(Processor):
         super().unload()
 
 # WD14 Processing
-class WDProcessor(Processor):
-    def __init__(self, min_score: float):
-        self.description = "Processing WD14"
-        self.model = WaifuDiffusionInterrogator()
-        self.min_score = min_score
-        shared.state.textinfo = "Loading WD14 Model..."
-        super().__init__()
-
-    def process(self, images: List[Image.Image]) -> List[List[str]]:
-        output = []
-        shared.state.job_count = len(images)
-        shared.state.textinfo = f"{self.description}..."
-        for img in tqdm(images, desc=self.description):
-            out_tags = []
-            ratings, tags = self.model.interrogate(img)
-            for tag in sorted(tags, key=tags.get, reverse=True):
-                if tags[tag] >= self.min_score:
-                    # print(f"WDTag {tag} score is {tags[tag]}")
-                    out_tags.append(tag)
-                else:
-                    break
-            output.append(out_tags)
-            shared.state.job_no += 1
-
-    def unload(self):
-        self.model.unload()
 
 # Crop Processing
 class CropProcessor(Processor):
@@ -244,25 +217,3 @@ class UpscaleProcessor(Processor):
         del self.model
         super().unload()
 
-class SystemUpscaleProcessor(Processor):
-    def __init__(self, scaler:str, upscale_ratio: int, ):
-        self.description = f"Upscaling ({scaler})"
-        self.model = shared.sd_upscalers[scaler]
-        self.upscale_ratio = upscale_ratio
-        super().__init__()
-
-    def process(self, images: List[Image.Image]) -> List[Image.Image]:
-        ldsr_model_arch.super_resolution = super_resolution
-        output = []
-        shared.state.job_count = len(images)
-        shared.state.textinfo = f"{self.description}..."
-        for img in tqdm(images, desc=self.description):
-            res = self.model.upscaler_1.upscale(img, self.upscale_ratio, self.model.data_path)
-            img = res
-            shared.state.current_image = img
-            shared.state.job_no += 1
-            output.append(img)
-        return output
-
-    def unload(self):
-        pass
