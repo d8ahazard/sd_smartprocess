@@ -39,7 +39,7 @@ class LLAVAInterrogator(Interrogator):
         self.processor = MplugOwlProcessor(self.image_processor, self.tokenizer)
         logger.debug("Initialized LLM model.")
 
-    def interrogate(self, image: Image, params=None, unload: bool = False) -> str:
+    def interrogate(self, image: Image, params: ProcessParams = None, unload: bool = False) -> str:
         self.load()
         if params is None:
             params = {}
