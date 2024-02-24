@@ -86,7 +86,7 @@ class MPLUG2Interrogator(Interrogator):
                 stopping_criteria=[stopping_criteria])
 
         caption = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
-
+        caption = caption.replace(",", "").replace(".", "").replace("?", "").replace("!", "").strip()
         return caption
 
     def _to_cpu(self):

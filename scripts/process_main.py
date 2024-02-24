@@ -1,4 +1,3 @@
-
 import os
 import shutil
 import sys
@@ -65,7 +64,8 @@ def list_scalers():
         for file in files:
             if file.endswith("_model.py"):
                 relative_path = os.path.relpath(os.path.join(root, file), scaler_dir)
-                module_name = "extensions.sd_smartprocess.upscalers." + relative_path.replace(os.sep, '.').replace('.py', '')
+                module_name = "extensions.sd_smartprocess.upscalers." + relative_path.replace(os.sep, '.').replace(
+                    '.py', '')
                 imported_module = import_module(module_name)
 
                 module_dir = os.path.dirname(os.path.join(root, file))
@@ -74,7 +74,8 @@ def list_scalers():
 
                 for name, obj in vars(imported_module).items():
                     # Check if the object is a class and a subclass of Upscaler
-                    if isinstance(obj, type) and (issubclass(obj, Upscaler) or any(issubclass(base, Upscaler) for base in obj.__bases__)):
+                    if isinstance(obj, type) and (
+                            issubclass(obj, Upscaler) or any(issubclass(base, Upscaler) for base in obj.__bases__)):
                         # Create an instance of the class and get the "scalers" attribute
                         instance = obj()
                         if hasattr(instance, 'scalers'):
@@ -87,6 +88,7 @@ def list_scalers():
     for scaler in scalers:
         if scaler.name not in [x.name for x in system_scalers]:
             system_scalers.append(scaler)
+
 
 def generate_caption_section():
     global captioner_accordions
