@@ -1,3 +1,4 @@
+
 import os
 import shutil
 import sys
@@ -37,7 +38,7 @@ registry = InterrogatorRegistry()
 
 int_dict = registry.list_interrogators()
 print(f"Found {len(int_dict.keys())} interrogators: {int_dict}")
-natural_captioner_names = ["CLIP", "BLIP", "LLAVA"]
+natural_captioner_names = ["CLIP", "BLIP", "MPLUG2"]
 default_captioners = ["Swin"]
 
 natural_captioners = {}

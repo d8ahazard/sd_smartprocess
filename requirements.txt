@@ -12,4 +12,4 @@ ruamel.yaml
 markdown2
 sconf
 tensorboardX
-transformers>=4.35.0
+transformers==4.38.1

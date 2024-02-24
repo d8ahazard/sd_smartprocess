@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint
 from icecream import ic
-
+import torch.nn.functional as F
 def get_abs_pos(abs_pos, tgt_size):
     # abs_pos: L, C
     # tgt_size: M
@@ -28,6 +28,7 @@ def get_abs_pos(abs_pos, tgt_size):
         ).permute(0, 2, 3, 1).flatten(0, 2).to(dtype=dtype)
     else:
         return abs_pos
+
 
 # https://github.com/facebookresearch/mae/blob/efb2a8062c206524e35e47d04501ed4f544c0ae8/util/pos_embed.py#L20
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
@@ -88,8 +89,10 @@ class MplugOwlVisionEmbeddings(nn.Module):
         self.hidden_size = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
-
-        self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+        if config.use_cls_token:
+            self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+        else:
+            self.cls_token = None
 
         self.patch_embed = nn.Conv2d(
             in_channels=3,
@@ -99,20 +102,25 @@ class MplugOwlVisionEmbeddings(nn.Module):
             bias=False,
         )
 
-        self.num_patches = (self.image_size // self.patch_size) ** 2
-
-        self.position_embedding = nn.Parameter(torch.randn(1, self.num_patches + 1, self.hidden_size))
-
+        if self.cls_token is not None:
+            self.num_patches = (self.image_size // self.patch_size) ** 2
+            self.position_embedding = nn.Parameter(torch.randn(1, self.num_patches + 1, self.hidden_size))
+        else:
+            self.num_patches = 256
+            self.position_embedding = nn.Parameter(torch.randn(256, self.hidden_size))
         self.pre_layernorm = nn.LayerNorm(self.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
         batch_size = pixel_values.size(0)
         image_embeds = self.patch_embed(pixel_values)
         image_embeds = image_embeds.flatten(2).transpose(1, 2)
-
-        class_embeds = self.cls_token.expand(batch_size, 1, -1).to(image_embeds.dtype)
-        embeddings = torch.cat([class_embeds, image_embeds], dim=1)
-        embeddings = embeddings + self.position_embedding[:, : embeddings.size(1)].to(image_embeds.dtype)
+        if self.cls_token is not None:
+            class_embeds = self.cls_token.expand(batch_size, 1, -1).to(image_embeds.dtype)
+            embeddings = torch.cat([class_embeds, image_embeds], dim=1)
+            embeddings = embeddings + self.position_embedding[:, : embeddings.size(1)].to(image_embeds.dtype)
+        else:
+            embeddings = image_embeds
+            embeddings = embeddings + get_abs_pos(self.position_embedding,embeddings.size(1))
         embeddings = self.pre_layernorm(embeddings)
         return embeddings
 
@@ -221,16 +229,17 @@ class MplugOwlVisionAttention(nn.Module):
         return outputs
 
 
-class QuickGELU(nn.Module):
-    def forward(self, x: torch.Tensor):
-        return x * torch.sigmoid(1.702 * x)
+# class QuickGELU(nn.Module):
+#     def forward(self, x: torch.Tensor):
+#         return x * torch.sigmoid(1.702 * x)
 
 
 class MplugOwlMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.activation_fn = QuickGELU()
+        from transformers.activations import ACT2FN
+        self.activation_fn = ACT2FN[config.hidden_act]
         self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
@@ -391,10 +400,20 @@ class MplugOwlVisionModel(PreTrainedModel):
 
         self.embeddings = MplugOwlVisionEmbeddings(config)
         self.encoder = MplugOwlVisionEncoder(config)
-        self.post_layernorm = nn.LayerNorm(self.hidden_size, eps=config.layer_norm_eps)
-
+        if config.use_post_layernorm:
+            self.post_layernorm = nn.LayerNorm(self.hidden_size, eps=config.layer_norm_eps)
+        else:
+            self.post_layernorm = None
+        self._no_split_modules = self._get_no_split_modules("")
         self.post_init()
 
+    def _get_no_split_modules(self, device_map: str):
+        if self._no_split_modules is None:
+            self._no_split_modules = {
+                "embeddings": self.embeddings,
+                "encoder": self.encoder,
+            }
+        return self._no_split_modules
 
     def forward(
         self,
@@ -426,10 +445,12 @@ class MplugOwlVisionModel(PreTrainedModel):
         )
 
         last_hidden_state = encoder_outputs[0]
-        last_hidden_state = self.post_layernorm(last_hidden_state)
+        if self.post_layernorm:
+            last_hidden_state = self.post_layernorm(last_hidden_state)
 
         pooled_output = last_hidden_state[:, 0, :]
-        pooled_output = self.post_layernorm(pooled_output)
+        if self.post_layernorm:
+            pooled_output = self.post_layernorm(pooled_output)
 
         if not return_dict:
             return (last_hidden_state, pooled_output) + encoder_outputs[1:]
@@ -499,7 +520,7 @@ class MplugOwlVisualAbstractorMultiHeadAttention(nn.Module):
         )
         self.register_buffer(
             'k_pos_embed', 
-            torch.from_numpy(get_2d_sincos_pos_embed(config.hidden_size, grids, cls_token=True)).float()
+            torch.from_numpy(get_2d_sincos_pos_embed(config.hidden_size, grids, cls_token=config.use_cls_token)).float()
         )
         
 
@@ -585,7 +606,7 @@ class MplugOwlVisualAbstractorMultiHeadAttention(nn.Module):
 class MplugOwlVisualAbstractorCrossOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        dim = config.hidden_size
+        dim = config.encoder_hidden_size
         self.out_proj = nn.Linear(dim, dim, bias=True)
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = MplugOwlVisualAbstractorMLP(config)
@@ -602,9 +623,19 @@ class MplugOwlVisualAbstractorAttention(nn.Module):
         self.attention = MplugOwlVisualAbstractorMultiHeadAttention(config)
         self.output = MplugOwlVisualAbstractorCrossOutput(config)
         self.pruned_heads = set()
-        self.norm1 = nn.LayerNorm(config.hidden_size)
-        self.normk = nn.LayerNorm(config.hidden_size)
+        self.norm1 = nn.LayerNorm(config.encoder_hidden_size)
+        self.normk = nn.LayerNorm(config.encoder_hidden_size)
+        
+        self.add_pos_embed = config.add_v2t_pos_emb
+        if self.add_pos_embed:
+            self.q_pos_embed = nn.Parameter(
+                torch.from_numpy(get_1d_sincos_pos_embed_from_grid(config.encoder_hidden_size, np.arange(config.num_learnable_queries, dtype=np.float32))).float()
+            ).requires_grad_(False)
 
+            self.k_pos_embed = nn.Parameter(
+                torch.from_numpy(get_2d_sincos_pos_embed(config.encoder_hidden_size, config.grid_size, cls_token=config.cls_token)).float()
+            ).requires_grad_(False)
+           
     def prune_heads(self, heads):
         if len(heads) == 0:
             return
@@ -757,13 +788,22 @@ class MplugOwlVisualAbstractorModel(PreTrainedModel):
     def __init__(self, config, language_hidden_size):
         super().__init__(config)
         self.config = config
-
         self.encoder = MplugOwlVisualAbstractorEncoder(config)
         self.visual_fc = torch.nn.Linear(config.hidden_size, language_hidden_size)
+        self._no_split_modules = self._get_no_split_modules("")
+
         self.query_embeds = torch.nn.Parameter(torch.randn(1, config.num_learnable_queries, config.hidden_size))
         self.vit_eos = torch.nn.Parameter(torch.randn(1, 1, language_hidden_size))
 
         self.post_init()
+
+    def _get_no_split_modules(self, device_map: str):
+        if self._no_split_modules is None:
+            self._no_split_modules = {
+                "encoder": self.encoder,
+                "visual_fc": self.visual_fc,
+            }
+        return self._no_split_modules
 
     def _prune_heads(self, heads_to_prune):
         """
@@ -849,7 +889,6 @@ class MplugOwlVisualAbstractorModel(PreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
         query_embeds = self.query_embeds.repeat(encoder_hidden_states.shape[0], 1, 1)
         embedding_output = query_embeds
         input_shape = embedding_output.size()[:-1]

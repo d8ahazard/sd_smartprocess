@@ -20,10 +20,16 @@ import shutil
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 from transformers.models.clip.image_processing_clip import CLIPImageProcessor
 import torch
-from mplug_owl2.model import *
+from extensions.sd_smartprocess.mplug_owl2.model import *
 from icecream import ic
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
-    kwargs = {"device_map": device_map}
+
+from extensions.sd_smartprocess.mplug_owl2 import MPLUGOwl2LlamaForCausalLM
+from extensions.sd_smartprocess.mplug_owl2.model import MPLUGOwl2QWenForCausalLM
+
+
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto",
+                          device="cuda", **kwargs):
+    kwargs = {"device_map": device_map, "ignore_mismatched_sizes": False, **kwargs}
 
     if device != "cuda":
         kwargs['device_map'] = {"": device}
@@ -43,20 +49,29 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     if 'mplug_owl2' in model_name.lower():
         # Load LLaVA model
         if 'lora' in model_name.lower() and model_base is None:
-            warnings.warn('There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument. Detailed instruction: https://github.com/haotian-liu/LLaVA#launch-a-model-worker-lora-weights-unmerged.')
+            warnings.warn(
+                'There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument. Detailed instruction: https://github.com/haotian-liu/LLaVA#launch-a-model-worker-lora-weights-unmerged.')
         if 'lora' in model_name.lower() and model_base is not None:
             lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
             print('Loading mPLUG-Owl2 from base model...')
-            model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
+            if 'mplug_owl2_1' in model_name.lower():
+                model = MPLUGOwl2QWenForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True,
+                                                                 config=lora_cfg_pretrained, **kwargs)
+            else:
+                model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True,
+                                                                  config=lora_cfg_pretrained, **kwargs)
             token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
             if model.lm_head.weight.shape[0] != token_num:
-                model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
-                model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+                model.lm_head.weight = torch.nn.Parameter(
+                    torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+                model.model.embed_tokens.weight = torch.nn.Parameter(
+                    torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
 
             print('Loading additional mPLUG-Owl2 weights...')
             if os.path.exists(os.path.join(model_path, 'non_lora_trainables.bin')):
-                non_lora_trainables = torch.load(os.path.join(model_path, 'non_lora_trainables.bin'), map_location='cpu')
+                non_lora_trainables = torch.load(os.path.join(model_path, 'non_lora_trainables.bin'),
+                                                 map_location='cpu')
             else:
                 # this is probably from HF Hub
                 from huggingface_hub import hf_hub_download
@@ -66,10 +81,13 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
                         filename=filename,
                         subfolder=subfolder)
                     return torch.load(cache_file, map_location='cpu')
+
                 non_lora_trainables = load_from_hf(model_path, 'non_lora_trainables.bin')
-            non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in non_lora_trainables.items()}
+            non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in
+                                   non_lora_trainables.items()}
             if any(k.startswith('model.model.') for k in non_lora_trainables):
-                non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in non_lora_trainables.items()}
+                non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in
+                                       non_lora_trainables.items()}
             model.load_state_dict(non_lora_trainables, strict=False)
 
             from peft import PeftModel
@@ -83,16 +101,24 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             print('Loading mPLUG-Owl2 from base model...')
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
             cfg_pretrained = AutoConfig.from_pretrained(model_path)
-            model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
+            if 'mplug_owl2_1' in model_name.lower():
+                model = MPLUGOwl2QWenForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True,
+                                                                 config=cfg_pretrained, **kwargs)
+            else:
+                model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True,
+                                                                  config=cfg_pretrained, **kwargs)
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-            model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
+            if 'mplug_owl2_1' in model_name.lower():
+                model = MPLUGOwl2QWenForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+            else:
+                model = MPLUGOwl2LlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
     else:
         # Load language model
         if model_base is not None:
             # PEFT model
             from peft import PeftModel
-            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, trust_remote_code=True)
             model = AutoModelForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, **kwargs)
             print(f"Loading LoRA weights from {model_path}")
             model = PeftModel.from_pretrained(model, model_path)
@@ -102,12 +128,11 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             model.to(torch.float16)
         else:
             use_fast = False
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
             model = AutoModelForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
 
-
     vision_tower = model.get_model().vision_model
-    vision_tower.to(device=device, dtype=torch.float16)
+    # vision_tower.to(device=device, dtype=torch.float16)
     image_processor = CLIPImageProcessor.from_pretrained(model_path)
 
     if hasattr(model.config, "max_sequence_length"):

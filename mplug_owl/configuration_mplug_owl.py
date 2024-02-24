@@ -193,7 +193,7 @@ class MplugOwlConfig(PretrainedConfig):
     Example:
 
     ```python
-    >>> from transformers import (
+    >>> from transformers.models.owlvit import (
     ...     MplugOwlVisionConfig,
     ...     MplugOwlVisualAbstractorConfig,
     ...     OPTConfig,
@@ -236,7 +236,7 @@ class MplugOwlConfig(PretrainedConfig):
 
         if text_config is None:
             # we use LLAMA 7b by default
-            from transformers.llama.configuration_llama import LlamaConfig
+            from transformers.models.llama.configuration_llama import LlamaConfig
 
             text_config = LlamaConfig(pad_token_id=2).to_dict()
             logger.info("text_config is None.")

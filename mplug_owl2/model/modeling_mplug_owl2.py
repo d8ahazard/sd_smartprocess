@@ -18,15 +18,15 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-
-from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, LlamaModel, LlamaForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .configuration_mplug_owl2 import MPLUGOwl2Config, MplugOwlVisionConfig, MplugOwlVisualAbstractorConfig
-from .visual_encoder import MplugOwlVisionModel, MplugOwlVisualAbstractorModel
+from extensions.sd_smartprocess.mplug_owl2.constants import IMAGE_TOKEN_INDEX, IGNORE_INDEX
+from .configuration_mplug_owl2 import MPLUGOwl2Config, MplugOwlVisionConfig, MplugOwlVisualAbstractorConfig, \
+    MPLUGOwl2QwenConfig
 from .modeling_llama2 import replace_llama_modality_adaptive
-from mplug_owl2.constants import IMAGE_TOKEN_INDEX, IGNORE_INDEX
-from icecream import ic
+from .modeling_qwen import QWenLMHeadModel, QWenModel
+from .visual_encoder import MplugOwlVisionModel, MplugOwlVisualAbstractorModel
 
 
 class MPLUGOwl2MetaModel:
@@ -67,8 +67,10 @@ class MPLUGOwl2MetaForCausalLM(ABC):
     ):
         if images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and images is not None and input_ids.shape[1] == 1:
-                attention_mask = torch.ones((attention_mask.shape[0], past_key_values[-1][-1].shape[-2] + 1),
-                                            dtype=attention_mask.dtype, device=attention_mask.device)
+                # print(attention_mask)
+                if attention_mask is not None:
+                    attention_mask = torch.ones((attention_mask.shape[0], past_key_values[-1][-1].shape[-2] + 1),
+                                                dtype=attention_mask.dtype, device=attention_mask.device)
             multiway_indices = torch.zeros_like(input_ids).long().to(self.device)
             return input_ids, multiway_indices, attention_mask, past_key_values, None, labels
 
@@ -210,11 +212,81 @@ class MPLUGOwl2MetaForCausalLM(ABC):
         return None, new_modality_indicators, attention_mask, past_key_values, new_input_embeds, new_labels
 
 
+def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
+    """
+    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
+    """
+    bsz, src_len = mask.size()
+    tgt_len = tgt_len if tgt_len is not None else src_len
+
+    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+
+    inverted_mask = 1.0 - expanded_mask
+
+    return inverted_mask.masked_fill(
+        inverted_mask.to(torch.bool), torch.finfo(dtype).min
+    )
+
+
+def _make_causal_mask(
+        input_ids_shape: torch.Size, dtype: torch.dtype, past_key_values_length: int = 0
+):
+    """
+    Make causal mask used for bi-directional self-attention.
+    """
+    bsz, tgt_len = input_ids_shape
+    mask = torch.full((tgt_len, tgt_len), torch.tensor(torch.finfo(dtype).min))
+    mask_cond = torch.arange(mask.size(-1))
+    mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
+    mask = mask.to(dtype)
+
+    if past_key_values_length > 0:
+        mask = torch.cat(
+            [torch.zeros(tgt_len, past_key_values_length, dtype=dtype), mask], dim=-1
+        )
+    return mask[None, None, :, :].expand(
+        bsz, 1, tgt_len, tgt_len + past_key_values_length
+    )
+
+
 class MPLUGOwl2LlamaModel(MPLUGOwl2MetaModel, LlamaModel):
     config_class = MPLUGOwl2Config
 
     def __init__(self, config: MPLUGOwl2Config):
         super(MPLUGOwl2LlamaModel, self).__init__(config)
+
+    def _prepare_decoder_attention_mask(
+            self, attention_mask, input_shape, inputs_embeds, past_key_values_length
+    ):
+        # create causal mask
+        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+        combined_attention_mask = None
+        if input_shape[-1] > 1:
+            combined_attention_mask = _make_causal_mask(
+                input_shape,
+                inputs_embeds.dtype,
+                past_key_values_length=past_key_values_length,
+            ).to(inputs_embeds.device)
+
+        if attention_mask is not None:
+            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+            expanded_attn_mask = _expand_mask(
+                attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
+            ).to(inputs_embeds.device)
+            combined_attention_mask = (
+                expanded_attn_mask
+                if combined_attention_mask is None
+                else expanded_attn_mask + combined_attention_mask
+            )
+
+        return combined_attention_mask
+
+
+class MPLUGOwl2QWenModel(MPLUGOwl2MetaModel, QWenModel):
+    config_class = MPLUGOwl2QwenConfig
+
+    def __init__(self, config: MPLUGOwl2QwenConfig):
+        super(MPLUGOwl2QWenModel, self).__init__(config)
 
 
 class MPLUGOwl2LlamaForCausalLM(LlamaForCausalLM, MPLUGOwl2MetaForCausalLM):
@@ -229,13 +301,17 @@ class MPLUGOwl2LlamaForCausalLM(LlamaForCausalLM, MPLUGOwl2MetaForCausalLM):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def encode_images(self, images):
+        image_features = self.get_model().vision_model(images).last_hidden_state
+        image_features = self.get_model().visual_abstractor(encoder_hidden_states=image_features).last_hidden_state
+        return image_features
+
     def get_model(self):
         return self.model
 
     def forward(
             self,
             input_ids: torch.LongTensor = None,
-            # modality_indicators: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
             past_key_values: Optional[List[torch.FloatTensor]] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -318,8 +394,145 @@ class MPLUGOwl2LlamaForCausalLM(LlamaForCausalLM, MPLUGOwl2MetaForCausalLM):
         return model_inputs
 
 
+class MPLUGOwl2QWenForCausalLM(QWenLMHeadModel, MPLUGOwl2MetaForCausalLM):
+    config_class = MPLUGOwl2QwenConfig
+
+    def __init__(self, config):
+        super(QWenLMHeadModel, self).__init__(config)
+        from .modeling_qwen import SUPPORT_BF16, logger, SUPPORT_FP16, SUPPORT_CUDA, _import_flash_attn
+        autoset_precision = config.bf16 + config.fp16 + config.fp32 == 0
+
+        if autoset_precision:
+            if SUPPORT_BF16:
+                logger.warn(
+                    "The model is automatically converting to bf16 for faster inference. "
+                    "If you want to disable the automatic precision, please manually add bf16/fp16/fp32=True to \"AutoModelForCausalLM.from_pretrained\"."
+                )
+                config.bf16 = True
+            elif SUPPORT_FP16:
+                logger.warn(
+                    "The model is automatically converting to fp16 for faster inference. "
+                    "If you want to disable the automatic precision, please manually add bf16/fp16/fp32=True to \"AutoModelForCausalLM.from_pretrained\"."
+                )
+                config.fp16 = True
+            else:
+                config.fp32 = True
+
+        if config.bf16 and SUPPORT_CUDA and not SUPPORT_BF16:
+            logger.warn(
+                "Your device does NOT seem to support bf16, you can switch to fp16 or fp32 by by passing fp16/fp32=True in \"AutoModelForCausalLM.from_pretrained\".")
+        if config.fp16 and SUPPORT_CUDA and not SUPPORT_FP16:
+            logger.warn(
+                "Your device does NOT support faster inference with fp16, please switch to fp32 which is likely to be faster")
+        if config.fp32:
+            if SUPPORT_BF16:
+                logger.warn(
+                    "Your device support faster inference by passing bf16=True in \"AutoModelForCausalLM.from_pretrained\".")
+            elif SUPPORT_FP16:
+                logger.warn(
+                    "Your device support faster inference by passing fp16=True in \"AutoModelForCausalLM.from_pretrained\".")
+
+        if config.use_flash_attn == "auto":
+            if config.bf16 or config.fp16:
+                logger.warn("Try importing flash-attention for faster inference...")
+                config.use_flash_attn = True
+            else:
+                config.use_flash_attn = False
+        if config.use_flash_attn and config.fp32:
+            logger.warn("Flash attention will be disabled because it does NOT support fp32.")
+
+        if config.use_flash_attn:
+            _import_flash_attn()
+
+        self.transformer = MPLUGOwl2QWenModel(config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        if config.bf16:
+            self.transformer.bfloat16()
+            self.lm_head.bfloat16()
+        if config.fp16:
+            self.transformer.half()
+            self.lm_head.half()
+        self.post_init()
+
+    def get_model(self):
+        return self.transformer
+
+    def forward(
+            self,
+            input_ids: Optional[torch.LongTensor] = None,
+            past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+            attention_mask: Optional[torch.FloatTensor] = None,
+            token_type_ids: Optional[torch.LongTensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            head_mask: Optional[torch.FloatTensor] = None,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            encoder_hidden_states: Optional[torch.Tensor] = None,
+            encoder_attention_mask: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            images=None,
+            return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
+
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        input_ids, modality_indicators, attention_mask, past_key_values, inputs_embeds, labels = \
+            self.prepare_inputs_labels_for_multimodal(input_ids, attention_mask, past_key_values, labels, images)
+        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        outputs = self.transformer(
+            input_ids,
+            modality_indicators=modality_indicators,
+            past_key_values=past_key_values,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        hidden_states = outputs[0]
+        logits = self.lm_head(hidden_states)
+
+        loss = None
+        if labels is not None:
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            loss_fct = CrossEntropyLoss()
+            shift_logits = shift_logits.view(-1, self.config.vocab_size)
+            shift_labels = shift_labels.view(-1)
+            # Enable model/pipeline parallelism
+            shift_labels = shift_labels.to(shift_logits.device)
+            loss = loss_fct(shift_logits, shift_labels)
+
+        if not return_dict:
+            output = (logits,) + outputs[1:]
+            return (loss,) + output if loss is not None else output
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
 AutoConfig.register("mplug_owl2", MPLUGOwl2Config)
 AutoModelForCausalLM.register(MPLUGOwl2Config, MPLUGOwl2LlamaForCausalLM)
+AutoConfig.register("mplug_owl2_1", MPLUGOwl2QwenConfig)
+AutoModelForCausalLM.register(MPLUGOwl2QwenConfig, MPLUGOwl2QWenForCausalLM)
 
 replace_llama_modality_adaptive()
 

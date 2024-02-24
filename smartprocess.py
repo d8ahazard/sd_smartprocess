@@ -27,7 +27,7 @@ clip_interrogator = None
 crop_clip = None
 image_interrogators = {}
 global_unpickler = None
-
+image_features = None
 
 def printi(message):
     shared.state.textinfo = message
@@ -77,18 +77,23 @@ def save_img_caption(image_path: str, img_caption: str, params: ProcessParams):
 
 
 def list_features():
-    # Create buffer for pilinfo() to write into rather than stdout
-    buffer = StringIO()
-    features.pilinfo(out=buffer)
-    pil_features = []
-    # Parse and analyse lines
-    for line in buffer.getvalue().splitlines():
-        if "Extensions:" in line:
-            ext_list = line.split(": ")[1]
-            extensions = ext_list.split(", ")
-            for extension in extensions:
-                if extension not in pil_features:
-                    pil_features.append(extension)
+    global image_features
+    if image_features is None:
+        # Create buffer for pilinfo() to write into rather than stdout
+        buffer = StringIO()
+        features.pilinfo(out=buffer)
+        pil_features = []
+        # Parse and analyse lines
+        for line in buffer.getvalue().splitlines():
+            if "Extensions:" in line:
+                ext_list = line.split(": ")[1]
+                extensions = ext_list.split(", ")
+                for extension in extensions:
+                    if extension not in pil_features:
+                        pil_features.append(extension)
+        image_features = pil_features
+    else:
+        pil_features = image_features
     return pil_features
 
 

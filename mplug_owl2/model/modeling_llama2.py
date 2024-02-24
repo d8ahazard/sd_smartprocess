@@ -16,6 +16,7 @@ from transformers.utils import logging
 
 from .modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from .configuration_mplug_owl2 import LlamaConfig
+from .multiway import MultiwayNetwork
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -28,33 +29,6 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
         return hidden_states
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-
-class MultiwayNetwork(nn.Module):
-
-    def __init__(self, module_provider, num_multiway=2):
-        super(MultiwayNetwork, self).__init__()
-
-        self.multiway = torch.nn.ModuleList([module_provider() for _ in range(num_multiway)])
-
-    def forward(self, hidden_states, multiway_indices):
-
-        if len(self.multiway) == 1:
-            return self.multiway[0](hidden_states)
-
-        output_hidden_states = torch.empty_like(hidden_states)
-
-        for idx, subway in enumerate(self.multiway):
-            local_indices = multiway_indices.eq(idx).nonzero(as_tuple=True)
-            hidden = hidden_states[local_indices].unsqueeze(1).contiguous()
-            if hidden.numel():
-                output = subway(hidden)
-                if isinstance(output, tuple):
-                    output = output[0]
-                output = output.squeeze(1)
-                output_hidden_states[local_indices] = output
-
-        return output_hidden_states.contiguous()
 
 
 class LlamaAttention(nn.Module):
@@ -142,7 +116,7 @@ class LlamaAttention(nn.Module):
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             kv_seq_len += past_key_value[0].shape[-2]
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len, position_ids=position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -193,19 +167,15 @@ class LlamaAttention(nn.Module):
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, annoying_param):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = LlamaAttention(config=config)
-        # Check if LlamaMLP takes one or three args
-        num_llama_args = len(inspect.signature(LlamaMLP.__init__).parameters)
-        if num_llama_args == 1:
-            self.mlp = LlamaMLP(config)
-        elif num_llama_args == 3:
-            self.mlp = LlamaMLP(config.hidden_size, config.intermediate_size, config.hidden_act)
-        else:
-            raise ValueError(f"Invalid number of arguments for LlamaMLP: {num_llama_args}")
-        self.mlp = LlamaMLP(config)
+        mlp_kwargs = {'config': config, "hidden_size": config.hidden_size,
+                      "intermediate_size": config.intermediate_size, "hidden_act": config.hidden_act}
+        valid_params = set(inspect.signature(LlamaMLP.__init__).parameters.keys()) - {'self'}
+        mlp_kwargs = {k: v for k, v in mlp_kwargs.items() if k in valid_params}
+        self.mlp = LlamaMLP(**mlp_kwargs)
         self.input_layernorm = MultiwayNetwork(module_provider=partial(
             LlamaRMSNorm, hidden_size=config.hidden_size, eps=config.rms_norm_eps
         ))
