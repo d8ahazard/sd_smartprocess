@@ -9,7 +9,7 @@ from extensions.sd_smartprocess import smartprocess
 from extensions.sd_smartprocess.file_manager import FileManager, ImageData
 from extensions.sd_smartprocess.interrogators.interrogator import InterrogatorRegistry
 from extensions.sd_smartprocess.process_params import ProcessParams
-from extensions.sd_smartprocess.smartprocess import is_image, get_backup_path
+from extensions.sd_smartprocess.smartprocess import get_backup_path
 from modules import script_callbacks, shared
 from modules.call_queue import wrap_gradio_gpu_call, wrap_gradio_call
 from modules.ui import setup_progressbar
@@ -469,18 +469,6 @@ def create_process_ui():
             params.src_files = file_manager.filtered_files()
             return process_outputs(params)
 
-        def start_caption(params: ProcessParams, current=False, selected=False):
-            params.captioners = tag_captioners
-            params.crop = False
-            params.pad = False
-            params.scale = False
-            params.restore_faces = False
-            params.caption = True
-            if len(params.src_files) > 0:
-                return process_outputs(params, current=current, selected=selected)
-            else:
-                return gr.update(value=None), gr.update(value=None), gr.update(value="No images selected")
-
         def process_tags(captions):
             global tags_dict
             tags_dict = {}
@@ -500,7 +488,6 @@ def create_process_ui():
             current_image = None
 
         def load_src(src_path):
-            # Enumerate all files recursively in src_path, and if they're an image, add them to the gallery
             global file_manager
             file_manager.file_path = src_path
             file_manager.load_files()
@@ -509,7 +496,6 @@ def create_process_ui():
             all_files = file_manager.filtered_files(True)
             print(f"Found {len(all_files)} images in {src_path}")
             outputs = [gr.update(value=all_files), tag_group]
-            # Enumerate all elements in elements_to_clear except for the first two
             for _ in elements_to_clear[2:]:
                 outputs.append(gr.update(value=None))
             return outputs

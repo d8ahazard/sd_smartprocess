@@ -6,7 +6,7 @@ import traceback
 from io import StringIO
 from math import sqrt
 from pathlib import Path
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -270,15 +270,28 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
     all_tags = all_tags.union(existing_tags)
 
     # Replace class with subject
-    if replace_class and subject and subject_class:
-        all_tags = {tag.replace(clean_string(subject_class), clean_string(subject)) for tag in all_tags}
-
+    if replace_class and subject is not "" and subject_class is not "":
+        phrases = ["a", "an", "the", "this", "that"]
+        cleaned_tags = []
+        for tag in all_tags:
+            replaced = False
+            lower_tag = tag.lower()
+            for phrase in phrases:
+                conjunction = f"{phrase} {subject_class.lower()}"
+                if conjunction in lower_tag:
+                    tag = lower_tag.replace(conjunction, f"{subject.lower()}")
+                    replaced = True
+                    break
+            if not replaced:
+                tag = lower_tag.replace(subject_class, subject)
+            cleaned_tags.append(tag)
+        all_tags = set(cleaned_tags)
     # Limiting caption length
     tags_list = list(all_tags)
     # Sort tags list by length, with the longest caption first
     tags_list.sort(key=len, reverse=True)
-    if caption_length and len(tags_list) > caption_length:
-        tags_list = tags_list[:caption_length]
+    # if caption_length and len(tags_list) > caption_length:
+    #     tags_list = tags_list[:caption_length]
 
     caption_txt = ", ".join(tags_list)
     return caption_txt
@@ -417,7 +430,7 @@ def crop_contain(img, params: ProcessParams):
     return img
 
 
-def process_pre(files: List[ImageData], params: ProcessParams) -> Union[List[str], List[Image.Image]]:
+def process_pre(files: List[ImageData], params: ProcessParams) -> List[ImageData]:
     output = []
     interrogator = None
     cc = None
@@ -475,7 +488,8 @@ def process_pre(files: List[ImageData], params: ProcessParams) -> Union[List[str
     return output
 
 
-def process_captions(files: List[ImageData], params: ProcessParams, all_captioners) -> Dict[str, str]:
+def process_captions(files: List[ImageData], params: ProcessParams, all_captioners) -> List[ImageData]:
+    output = []
     caption_dict = {}
     caption_length = params.max_tokens
     tags_to_ignore = params.tags_to_ignore
@@ -483,8 +497,7 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
     subject = params.subject
     replace_class = params.replace_class
     txt_action = params.txt_action
-    save_captions = params.save_caption
-    output = []
+    save_captions = params.save_caption or params.auto_save
     agents = get_image_interrogators(params, all_captioners)
     total_files = len(files)
     total_captions = total_files * len(agents)
@@ -530,8 +543,7 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
     return output
 
 
-def process_post(files: ImageData, params: ProcessParams) -> Union[
-    List[str], List[Image.Image]]:
+def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
     output = []
     total_files = len(files)
     total_post = 0
@@ -623,7 +635,7 @@ def process_post(files: ImageData, params: ProcessParams) -> Union[
     return output
 
 
-def do_process(params: ProcessParams):
+def do_process(params: ProcessParams) -> Tuple[List[ImageData], str]:
     print(f"Processing with params: {params}")
     output = params.src_files
     try:

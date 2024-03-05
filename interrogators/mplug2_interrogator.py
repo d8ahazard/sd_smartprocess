@@ -1,5 +1,6 @@
 import gc
 import logging
+from datetime import datetime
 
 import torch
 from PIL import Image
@@ -14,11 +15,29 @@ from extensions.sd_smartprocess.mplug_owl2.mm_utils import KeywordsStoppingCrite
     get_model_name_from_path
 from extensions.sd_smartprocess.mplug_owl2.model.builder import load_pretrained_model
 from extensions.sd_smartprocess.process_params import ProcessParams
-from extensions.sd_smartprocess.smartprocess import read_caption
 
 # This is basically broken until we can update transformers in AUTO past the current version supported
 
 logger = logging.getLogger(__name__)
+
+NO_CAP_PROMPT = """
+Generate a concise caption describing the key elements and context of the image in one sentence, 
+focusing on the medium, subject, style, clothing, pose, action, and location. Ensure the sentence is accurate and devoid
+ of assumptions, prose, etc. Keep it direct and relevant to the image.
+
+Follow the caption with a list of specific tags (keywords) detailing smaller key elements like clothing, poses,
+actions, and other notable features. 
+"""
+
+EX_CAP_PROMPT = """
+Here is a caption consisting of a sentence and a list of tags (keywords) that describe the image.
+
+Refine the provided caption to more accurately and vividly capture the essence and key details visible in the image,
+focusing on encapsulating the medium, subject, style, clothing, pose, action, and location in one sentence. 
+ 
+Update the accompanying tags to reflect only the elements present in the image, ensuring precision and relevance.
+Avoid adding new information not supported by the existing caption or the image.
+"""
 
 
 class MPLUG2Interrogator(Interrogator):
@@ -43,18 +62,17 @@ class MPLUG2Interrogator(Interrogator):
     def interrogate(self, image: Image, params: ProcessParams = None, unload: bool = False) -> str:
         self.load()
 
-        query = "Analyze the provided image carefully and generate a comprehensive caption in natural language that succinctly summarizes the key elements and the overall context of the image. Following the narrative caption, provide a list of descriptive tags that detail significant components of the image. Focus on identifying and describing any people, animals, objects, and scenery. Include specifics such as hair colors, dog breeds, styles of clothing or footwear, and any other noteworthy features that stand out in the image. Ensure the language is clear, engaging, and directly relevant to what is visibly present in the image."
+        query = NO_CAP_PROMPT
         if params is not None:
             if params.new_caption != "":
                 existing_caption_txt = params.new_caption
-                query = f"Review the provided image along with its existing caption. First, refine the existing natural-language caption to better capture the essence and key details of the image, ensuring the language is vivid, precise, and comprehensive. Then, examine the current list of descriptive tags accompanying the caption. Update these tags to accurately reflect the contents of the image, adding new tags for previously unmentioned but relevant details and removing any tags that are no longer applicable. Pay special attention to details such as the appearance of people, animal breeds, specific styles or designs of clothing and accessories, and the overall setting. The goal is to enhance the clarity and relevance of both the caption and the tags, providing a coherent and detailed description of the image: {existing_caption_txt}"
+                query = f"{EX_CAP_PROMPT}: {existing_caption_txt}"
                 logger.debug(f"Existing caption query: {query}")
 
         conv = conv_templates["mplug_owl2"].copy()
 
         max_edge = max(image.size)
         image = image.resize((max_edge, max_edge))
-
         image_tensor = process_images([image], self.image_processor)
         image_tensor = image_tensor.to(self.model.device, dtype=torch.float16)
 
@@ -96,7 +114,10 @@ class MPLUG2Interrogator(Interrogator):
         # self.tokenizer.to('cpu')
 
     def _to_gpu(self):
+        print("Moving to GPU")
+        time = datetime.now()
         self.model.to(self.device)
+        print(f"Model to GPU: {datetime.now() - time}")
         # self.image_processor.to(self.device)
         # self.tokenizer.to(self.device)
 
