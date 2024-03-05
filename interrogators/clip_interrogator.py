@@ -235,12 +235,12 @@ class CLIPInterrogator(Interrogator):
                 batch.append(self.movements.rank(image_features, 1)[0])
 
             check_multi_batch(batch)
-            tags = best_prompt.split(",")
+            output = best_prompt
         else:
-            tags = [best_prompt]
+            output = best_prompt
         if unload:
             self.unload()
-        return tags
+        return output
 
     def rank_top(self, image_features: torch.Tensor, text_array: List[str]) -> str:
         text_tokens = self.tokenize([text for text in text_array]).to(self.device)
