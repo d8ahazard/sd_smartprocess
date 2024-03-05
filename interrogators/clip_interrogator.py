@@ -52,7 +52,7 @@ class CLIPInterrogator(Interrogator):
         self.append_flavor = params.clip_append_flavor
         self.params = params
         self.blip_interrogator = None
-        self.load_clip_model()
+        self.load_clip_model(self.v2)
 
 
 
