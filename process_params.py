@@ -85,12 +85,13 @@ class ProcessParams:
         self.crop = False
         self.pad = False
 
-
     @classmethod
     def from_dict(cls, d):
         instance = cls()  # Get the singleton instance
         for k, v in d.items():
             k = k.replace("sp_", "")  # Adjust the attribute name
+            if k == "class":
+                k = "subject_class"
             if hasattr(instance, k):
                 setattr(instance, k, v)
         return instance

@@ -19,10 +19,6 @@ from extensions.sd_smartprocess.process_params import ProcessParams
 
 @dataclass
 class Config:
-    # models can optionally be passed in directly
-    clip_model = None
-    clip_preprocess = None
-
     # clip settings
     clip_model_name: str = 'ViT-L-14/openai'
     clip_model_path: str = None
@@ -33,94 +29,62 @@ class Config:
     data_path: str = os.path.join(os.path.dirname(__file__), 'data')
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     flavor_intermediate_count: int = 2048
-    quiet: bool = False  # when quiet progress bars are not shown
+    quiet: bool = False
 
 
 class CLIPInterrogator(Interrogator):
-    params = {
-        "min_clip_tokens": 32,
-        "max_clip_tokens": 75,
-        "num_beams": 1,
-        "max_flavors": 32,
-        "use_v2": False,
-        "append_artist": False,
-        "append_medium": False,
-        "append_movement": False,
-        "append_flavor": False,
-        "append_trending": False
-    }
-
     def __init__(self, params: ProcessParams):
         super().__init__(params)
-        if params.clip_use_v2:
-            model_name = "ViT-H-14/laion2b_s32b_b79k"
-        else:
-            model_name = "ViT-L-14/openai"
-        print(f"Loading CLIP model from {model_name}")
-        self.artists = None
-        self.flavors = None
-        self.mediums = None
-        self.movements = None
-        self.tokenize = None
-        self.trendings = None
+        self.config = Config()
+        self.config.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.model_name = "ViT-H-14/laion2b_s32b_b79k" if params.clip_use_v2 else "ViT-L-14/openai"
+        self.v2 = params.clip_use_v2
+
         self.clip_model = None
         self.clip_preprocess = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.tokenize = None
+
         self.append_artist = params.clip_append_artist
         self.append_medium = params.clip_append_medium
         self.append_movement = params.clip_append_movement
         self.append_trending = params.clip_append_trending
         self.append_flavor = params.clip_append_flavor
-        self.blip_initial_prompt = params.blip_initial_prompt
-        self.min_clip_tokens = params.min_clip_tokens
-        self.max_clip_tokens = params.max_clip_tokens
-        self.max_flavors = params.clip_max_flavors
-        config = Config
-        config.clip_model_name = model_name
-        config.blip_min_length = self.min_clip_tokens
-        config.blip_max_length = self.max_clip_tokens
-        config.blip_num_beams = params.num_beams
-        config.device = self.device
-        self.config = config
-        self.blip_interrogator = BLIPInterrogator(params)
+        self.params = params
+        self.blip_interrogator = None
         self.load_clip_model()
 
+
+
+
     def set_model_type(self, use_v2):
-        if use_v2:
-            model_name = "ViT-H-14/laion2b_s32b_b79k"
-        else:
-            model_name = "ViT-L-14/openai"
-        if self.config.clip_model_name != model_name:
-            if self.clip_model is not None:
-                del self.clip_model
-            print(f"Loading CLIP model from {model_name}")
-            self.config.clip_model_name = model_name
-            self.load_clip_model()
+        model_name = "ViT-H-14/laion2b_s32b_b79k" if use_v2 else "ViT-L-14/openai"
+        if self.model_name != model_name:
+            self.model_name = model_name
+            self.v2 = use_v2
+            self.load_clip_model(use_v2)
 
-    def load_clip_model(self):
+    def load_clip_model(self, use_v2):
+        if not self.config.quiet:
+            print(f"Loading CLIP model from {self.model_name}...")
+
         start_time = time.time()
-        config = self.config
-
-        if config.clip_model is None:
-            if not config.quiet:
-                print("Loading CLIP model...")
-
-            clip_model_name, clip_model_pretrained_name = config.clip_model_name.split('/', 2)
+        clip_model_name, clip_model_pretrained_name = self.model_name.split('/', 2)
+        if self.model is None or self.v2 != use_v2:
             self.clip_model, _, self.clip_preprocess = open_clip.create_model_and_transforms(
                 clip_model_name,
                 pretrained=clip_model_pretrained_name,
-                precision='fp16' if config.device == 'cuda' else 'fp32',
-                device=config.device,
+                precision='fp16' if self.config.device == 'cuda' else 'fp32',
+                device=self.config.device,
                 jit=False,
-                cache_dir=config.clip_model_path
+                cache_dir=self.config.clip_model_path
             )
-            self.clip_model.to(config.device).eval()
-        else:
-            self.clip_model = config.clip_model
-            self.clip_preprocess = config.clip_preprocess
-            clip_model_name = config.clip_model_name
+            self.clip_model.to(self.config.device).eval()
 
-        self.tokenize = open_clip.get_tokenizer(clip_model_name)
+            self.tokenize = open_clip.get_tokenizer(clip_model_name)
+
+        if self.blip_interrogator is None:
+            self.blip_interrogator = BLIPInterrogator(self.params)
 
         sites = ['Artstation', 'behance', 'cg society', 'cgsociety', 'deviantart', 'dribble', 'flickr', 'instagram',
                  'pexels', 'pinterest', 'pixabay', 'pixiv', 'polycount', 'reddit', 'shutterstock', 'tumblr', 'unsplash',
@@ -130,25 +94,25 @@ class CLIPInterrogator(Interrogator):
         trending_list.extend(["featured on " + site for site in sites])
         trending_list.extend([site + " contest winner" for site in sites])
 
-        raw_artists = _load_list(config.data_path, 'artists.txt')
+        raw_artists = _load_list(self.config.data_path, 'artists.txt')
         artists = [f"by {a}" for a in raw_artists]
         artists.extend([f"inspired by {a}" for a in raw_artists])
         if self.append_artist:
-            self.artists = LabelTable(artists, "artists", self.clip_model, self.tokenize, config)
+            self.artists = LabelTable(artists, "artists", self.clip_model, self.tokenize, self.config)
         if self.append_flavor:
-            self.flavors = LabelTable(_load_list(config.data_path, 'flavors.txt'), "flavors", self.clip_model,
-                                      self.tokenize, config)
+            self.flavors = LabelTable(_load_list(self.config.data_path, 'flavors.txt'), "flavors", self.clip_model,
+                                      self.tokenize, self.config)
         if self.append_medium:
-            self.mediums = LabelTable(_load_list(config.data_path, 'mediums.txt'), "mediums", self.clip_model,
-                                      self.tokenize, config)
+            self.mediums = LabelTable(_load_list(self.config.data_path, 'mediums.txt'), "mediums", self.clip_model,
+                                      self.tokenize, self.config)
         if self.append_movement:
-            self.movements = LabelTable(_load_list(config.data_path, 'movements.txt'), "movements", self.clip_model,
-                                        self.tokenize, config)
+            self.movements = LabelTable(_load_list(self.config.data_path, 'movements.txt'), "movements", self.clip_model,
+                                        self.tokenize, self.config)
         if self.append_trending:
-            self.trendings = LabelTable(trending_list, "trendings", self.clip_model, self.tokenize, config)
+            self.trendings = LabelTable(trending_list, "trendings", self.clip_model, self.tokenize, self.config)
 
         end_time = time.time()
-        if not config.quiet:
+        if not self.config.quiet:
             print(f"Loaded CLIP model and data in {end_time - start_time:.2f} seconds.")
 
     def generate_caption(self, image: Image) -> str:
@@ -263,6 +227,8 @@ class CLIPInterrogator(Interrogator):
             self.clip_model.to('cpu')
         if self.blip_interrogator is not None:
             self.blip_interrogator.unload()
+            del self.blip_interrogator
+            self.blip_interrogator = None
 
     def load(self):
         if self.clip_model is not None:

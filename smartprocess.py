@@ -204,8 +204,10 @@ def clean_string(s):
 
     Returns: A cleaned string.
     """
+    # Strip any HTML tags
+    cleaned = re.sub(r'<[^>]+>', '', s)
     # Remove non-alphanumeric characters except spaces
-    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', s)
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned)
     # Check for a sentence with just the same word repeated
     if len(set(cleaned.split())) == 1:
         cleaned = cleaned.split()[0]
