@@ -50,7 +50,7 @@ class LLAVA2Interrogator(Interrogator):
         logger.debug("Initializing LLM model...")
         model_path = fetch_model('MAGAer13/mplug-owl2-llama2-7b', "llm")
         model_name = get_model_name_from_path(model_path)
-        self.load_8bit = params.load_mplug_8bit
+        self.load_8bit = params.load_in_8bit
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = None
         self.tokenizer = None
