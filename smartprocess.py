@@ -561,7 +561,6 @@ def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
     if params.upscale:
         total_post += total_files
     pbar = tqdm(total=total_post, desc="Post-processing images")
-    params.do_rename = False
     upscalers = []
 
     if params.upscale:
@@ -570,7 +569,7 @@ def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
             upscalers.append(params.upscaler_1)
         if params.upscaler_2 is not None and params.upscaler_2 != "None":
             upscalers.append(params.upscaler_2)
-
+    img_index = 0
     for file in files:
         img = file.get_image()
         if params.restore_faces:
@@ -637,10 +636,11 @@ def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
                     shared.state.current_image = img
 
         if params.save_image:
-            img_path = save_pic(img, file, 0, params)
+            img_path = save_pic(img, file, img_index, params)
             file.image_path = img_path
         file.update_image(img, False)
         output.append(file)
+        img_index += 1
     return output
 
 

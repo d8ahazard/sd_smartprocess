@@ -48,7 +48,7 @@ class BLIPInterrogator(Interrogator):
         try:
             model_path = fetch_model('Salesforce/blip2-opt-6.7b', "blip2")
             self.processor = AutoProcessor.from_pretrained(model_path)
-            self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16, load_in_8bit=True)
+            self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16, load_in_8bit=False)
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model.to(self.device)
         except:

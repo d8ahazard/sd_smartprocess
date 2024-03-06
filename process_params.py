@@ -25,7 +25,7 @@ class ProcessParams:
     dst: str = ""
     face_model: str = "Codeformers"
     flip: bool = False
-    load_mplug_8bit: bool = True
+    load_mplug_8bit: bool = False
     max_clip_tokens: float = 1.0
     max_size: int = 1024
     max_tokens: int = 75

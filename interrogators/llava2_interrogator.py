@@ -43,7 +43,7 @@ Avoid adding new information not supported by the existing caption or the image.
 class LLAVA2Interrogator(Interrogator):
     model = None
     processor = None
-    params = {"max_tokens": 75, "load_mplug_8bit": True}
+    params = {"max_tokens": 75, "load_mplug_8bit": False}
 
     def __init__(self, params: ProcessParams):
         super().__init__(params)
