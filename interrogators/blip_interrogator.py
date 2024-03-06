@@ -31,8 +31,7 @@ class BLIPInterrogator(Interrogator):
         self.load()
         self.params = params
         max_tokens = params.max_tokens
-        prompt = params.blip_initial_prompt
-        inputs = self.processor(image, text=prompt, return_tensors="pt").to(self.device, torch.float16)
+        inputs = self.processor(image, return_tensors="pt").to(self.device, torch.float16)
         generated_ids = self.model.generate(**inputs, max_new_tokens=max_tokens)
         generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         if unload:
@@ -47,9 +46,9 @@ class BLIPInterrogator(Interrogator):
 
     def load(self):
         try:
-            model_path = fetch_model('Salesforce/blip2-opt-2.7b', "blip2")
+            model_path = fetch_model('Salesforce/blip2-opt-6.7b', "blip2")
             self.processor = AutoProcessor.from_pretrained(model_path)
-            self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16)
+            self.model = Blip2ForConditionalGeneration.from_pretrained(model_path, torch_dtype=torch.float16, load_in_8bit=True)
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model.to(self.device)
         except:

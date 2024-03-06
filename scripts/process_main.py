@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 from importlib import import_module
+from typing import Tuple, Union
 
 import gradio as gr
 
@@ -37,7 +38,7 @@ registry = InterrogatorRegistry()
 
 int_dict = registry.list_interrogators()
 print(f"Found {len(int_dict.keys())} interrogators: {int_dict}")
-natural_captioner_names = ["CLIP", "BLIP", "MPLUG2"]
+natural_captioner_names = ["BLIP", "LLAVA2"]
 default_captioners = ["Swin"]
 
 natural_captioners = {}
@@ -412,7 +413,18 @@ def create_process_ui():
                 outputs=[sp_crop_row, sp_cap_row, sp_post_row]
             )
 
-        def process_outputs(params: ProcessParams, current=False, selected=False):
+        def process_outputs(params: ProcessParams, current=False, selected=False) -> Union[Tuple[gr.update, gr.update], Tuple[gr.update, gr.update, gr.update]]:
+            """Process the images and update the UI
+            :param params: The parameters to use for processing
+            :param current: Whether to process the current image
+            :param selected: Whether to process the selected images
+            :return: The updated UI elements
+
+            if current: Tuple[gr.update, gr.update, gr.update] - The updated current image, caption, and output message
+
+            if selected/all: Tuple[gr.update, gr.update, gr.update] - The updated all images, selected images, and output message"""
+
+
             global file_manager
             global current_image
             image_data, output = smartprocess.do_process(params)
@@ -424,16 +436,15 @@ def create_process_ui():
                         value=current_image.caption), gr.update(value=output)
                 else:
                     return gr.update(value=None), gr.update(value=None), gr.update(value=output)
-            elif selected:
-                images = file_manager.filtered_and_selected_files(True)
-                return gr.update(value=images), gr.update(value=output)
             else:
                 images = file_manager.filtered_files(True)
                 selected_files = file_manager.filtered_and_selected_files(True)
-                return gr.update(value=images), gr.update(value=output), gr.update(
-                    value=selected_files)
+                return gr.update(value=images), gr.update(value=selected_files), gr.update(value=output)
 
         def pre_process_current(*args):
+            """Pre-process the current image
+            :param args: The parameters to use for pre-processing
+            :return: The updated current image, caption, and output message"""
             global current_image
             params = params_to_dict(*args)
             params.src_files = [current_image]
@@ -442,6 +453,9 @@ def create_process_ui():
             return process_outputs(params, current=True)
 
         def caption_current(*args):
+            """Caption the current image
+            :param args: The parameters to use for captioning
+            :return: The updated current image, caption, and output message"""
             global current_image
             cap_params = params_to_dict(*args)
             cap_params.src_files = [current_image]
@@ -450,6 +464,9 @@ def create_process_ui():
             return process_outputs(cap_params, current=True)
 
         def post_process_current(*args):
+            """Post-process the current image
+            :param args: The parameters to use for post-processing
+            :return: The updated current image, caption, and output message"""
             global current_image
             post_params = params_to_dict(*args)
             post_params.src_files = [current_image]
@@ -458,12 +475,18 @@ def create_process_ui():
             return process_outputs(post_params, current=True)
 
         def process_selected(*args):
+            """Process the selected images
+            :param args: The parameters to use for processing
+            :return: Updated all images, selected images, and output message"""
             global file_manager
             params = params_to_dict(*args)
             params.src_files = file_manager.filtered_and_selected_files()
             return process_outputs(params, selected=True)
 
         def process_all(*args):
+            """Process all the images
+            :param args: The parameters to use for processing
+            :return: Updated all images, selected images, and output message"""
             global file_manager
             params = params_to_dict(*args)
             params.src_files = file_manager.filtered_files()
@@ -838,20 +861,17 @@ def create_process_ui():
         )
 
         sp_process_selected.click(
-            fn=wrap_gradio_gpu_call(process_selected, extra_outputs=[gr.update()]),
+            fn=wrap_gradio_call(process_selected),
             _js="start_smart_process",
             inputs=all_inputs(),
-            outputs=[sp_current_caption]
+            outputs=[sp_gallery_all, sp_gallery_selected, sp_outcome]
         )
 
         sp_process_all.click(
-            fn=wrap_gradio_gpu_call(process_all, extra_outputs=[gr.update()]),
+            fn=wrap_gradio_call(process_all),
             _js="start_smart_process",
             inputs=all_inputs(),
-            outputs=[
-                sp_progress,
-                sp_outcome
-            ],
+            outputs=[sp_gallery_all, sp_gallery_selected, sp_outcome],
         )
 
         sp_cancel.click(

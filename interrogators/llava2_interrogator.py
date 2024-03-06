@@ -40,19 +40,22 @@ Avoid adding new information not supported by the existing caption or the image.
 """
 
 
-class MPLUG2Interrogator(Interrogator):
+class LLAVA2Interrogator(Interrogator):
     model = None
     processor = None
-    params = {"max_tokens": 75}
+    params = {"max_tokens": 75, "load_mplug_8bit": True}
 
     def __init__(self, params: ProcessParams):
         super().__init__(params)
         logger.debug("Initializing LLM model...")
         model_path = fetch_model('MAGAer13/mplug-owl2-llama2-7b', "llm")
         model_name = get_model_name_from_path(model_path)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.current_device = self.device
+        self.load_8bit = params.load_mplug_8bit
         self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(model_path, None,
                                                                                                    model_name,
-                                                                                                   load_8bit=False,
+                                                                                                   load_8bit=self.load_8bit,
                                                                                                    load_4bit=False,
                                                                                                    device="cuda")
 
@@ -109,23 +112,39 @@ class MPLUG2Interrogator(Interrogator):
         return caption
 
     def _to_cpu(self):
-        self.model.to('cpu')
-        # self.image_processor.to('cpu')
-        # self.tokenizer.to('cpu')
+        if self.load_8bit:
+            print("Model is loaded in 8bit, can't move to CPU.")
+            return
+        from extensions.sd_smartprocess.smartprocess import vram_usage
+        used, total = vram_usage()
+        print(f"VRAM: {used}/{total}")
+        free = total - used
+        # If we have over 16GB of VRAM, we can use the GPU
+        if free > 16:
+            print("VRAM is over 16GB, moving to GPU")
+            self._to_gpu()
+            return
+        print("Moving to CPU")
+        if self.current_device != "cpu":
+            self.model.to('cpu')
+            self.current_device = "cpu"
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
     def _to_gpu(self):
-        print("Moving to GPU")
-        time = datetime.now()
-        self.model.to(self.device)
-        print(f"Model to GPU: {datetime.now() - time}")
+        if self.current_device != "cuda" and torch.cuda.is_available():
+            print("Moving to GPU")
+            time = datetime.now()
+            self.model.to(self.device)
+            print(f"Model to GPU: {datetime.now() - time}")
+            self.current_device = "cuda"
         # self.image_processor.to(self.device)
         # self.tokenizer.to(self.device)
 
     def unload(self):
+        print("Unloading model")
         self._to_cpu()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
 
     def load(self):
         self._to_gpu()

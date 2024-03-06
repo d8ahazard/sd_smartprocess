@@ -27,11 +27,11 @@ def clean_string(s):
 
 class ImageData:
     image_path: str = ""
+    temp_image_path: str = ""
     caption: str = ""
     tags: List[str] = []
     selected: bool = False
     filtered: bool = False
-    image = None
     id = None
 
     def __init__(self, image_path):
@@ -64,8 +64,10 @@ class ImageData:
             if img_path != self.image_path and os.path.exists(self.image_path):
                 os.remove(self.image_path)
             self.image_path = img_path
-            image.save(self.image_path)
-        self.image = image
+        else:
+            self.temp_image_path = os.path.splitext(self.image_path)[0] + '_temp.png'
+            img_path = self.temp_image_path
+        image.save(img_path)
 
     def update_caption(self, caption: str, save_file: bool = False):
         if save_file:
@@ -76,9 +78,7 @@ class ImageData:
         self.tags = self.split_caption()
 
     def get_image(self):
-        if self.image is None:
-            self.image = PIL.Image.open(self.image_path).convert("RGB")
-        return self.image
+        return PIL.Image.open(self.image_path).convert("RGB")
 
 
 class FileManager:

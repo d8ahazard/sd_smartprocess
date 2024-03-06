@@ -6,7 +6,7 @@ import traceback
 from io import StringIO
 from math import sqrt
 from pathlib import Path
-from typing import Union, Dict, List, Tuple
+from typing import Union, List, Tuple
 
 import numpy as np
 import torch
@@ -17,17 +17,18 @@ import modules.codeformer_model
 import modules.gfpgan_model
 from clipcrop import CropClip
 from extensions.sd_smartprocess.file_manager import ImageData
-from extensions.sd_smartprocess.interrogators.clip_interrogator import CLIPInterrogator
+from extensions.sd_smartprocess.interrogators.blip_interrogator import BLIPInterrogator
 from extensions.sd_smartprocess.interrogators.interrogator import InterrogatorRegistry
 from extensions.sd_smartprocess.model_download import disable_safe_unpickle, enable_safe_unpickle
 from extensions.sd_smartprocess.process_params import ProcessParams
 from modules import shared, images
 
-clip_interrogator = None
+blip_interrogator = None
 crop_clip = None
 image_interrogators = {}
 global_unpickler = None
 image_features = None
+
 
 def printi(message):
     shared.state.textinfo = message
@@ -120,9 +121,11 @@ def cleanup():
 
 def vram_usage():
     if torch.cuda.is_available():
-        return torch.cuda.memory_allocated(0) / 1024 ** 3
+        used_vram = torch.cuda.memory_allocated(0) / 1024 ** 3  # Convert bytes to GB
+        total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3  # Convert bytes to GB
+        return used_vram, total_vram
     else:
-        return 0
+        return 0.0, 0.0
 
 
 def unload_system():
@@ -139,7 +142,8 @@ def unload_system():
         except:
             pass
     cleanup()
-    print(f"System unloaded, current VRAM usage: {vram_usage()} GB")
+    used, total = vram_usage()
+    print(f"System unloaded, current VRAM usage: {used}/{total} GB")
 
 
 def load_system():
@@ -151,15 +155,6 @@ def load_system():
             modules.shared.sd_model.to(shared.device)
     except:
         pass
-
-
-def get_clip_interrogator(params: ProcessParams):
-    global clip_interrogator
-    if clip_interrogator is None:
-        clip_interrogator = CLIPInterrogator(params)
-    else:
-        clip_interrogator.unload()
-    return clip_interrogator
 
 
 def get_crop_clip():
@@ -183,10 +178,7 @@ def get_image_interrogators(params: ProcessParams, all_captioners):
     for interrogator_name in interrogators:
         if interrogator_name not in image_interrogators:
             printi(f"\rLoading {interrogator_name} interrogator...")
-            if interrogator_name == "Clip":
-                interrogator = get_clip_interrogator(params.clip_params())
-            else:
-                interrogator = all_interrogators[f"{interrogator_name}Interrogator"](params)
+            interrogator = all_interrogators[f"{interrogator_name}Interrogator"](params)
             image_interrogators[interrogator_name] = interrogator
         else:
             interrogator = image_interrogators[interrogator_name]
@@ -315,8 +307,8 @@ def calculate_job_length(files, crop, caption, captioners, flip, restore_faces, 
     return job_length
 
 
-def crop_smart(img: Image, interrogator: CLIPInterrogator, cc: CropClip, params: ProcessParams):
-    short_caption = interrogator.interrogate(img, params, short=True)
+def crop_smart(img: Image, interrogator: BLIPInterrogator, cc: CropClip, params: ProcessParams):
+    short_caption = interrogator.interrogate(img, params)
     im_data = cc.get_center(img, prompt=short_caption)
     crop_width = im_data[1] - im_data[0]
     center_x = im_data[0] + (crop_width / 2)
@@ -432,12 +424,25 @@ def crop_contain(img, params: ProcessParams):
     return img
 
 
+def get_blip_interrogator(params: ProcessParams):
+    global blip_interrogator
+
+    if blip_interrogator is None:
+        blip_interrogator = BLIPInterrogator(params)
+
+    else:
+
+        blip_interrogator.unload()
+
+    return blip_interrogator
+
+
 def process_pre(files: List[ImageData], params: ProcessParams) -> List[ImageData]:
     output = []
     interrogator = None
     cc = None
     if params.crop and params.crop_mode == "smart":
-        interrogator = get_clip_interrogator(params.clip_params())
+        interrogator = get_blip_interrogator(params.clip_params())
         cc = get_crop_clip()
     total_files = len(files)
     crop_length = 0
@@ -515,10 +520,11 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
             if image_path not in caption_dict:
                 caption_dict[image_path] = []
             try:
-                # If the agent is mplug2, build the current caption
-                if caption_agent.__class__.__name__ == "MPLUG2Interrogator":
-                    print("Building caption for mplug2")
-                    temp_params.new_caption = build_caption(image_path, caption_dict[image_path], tags_to_ignore, caption_length,
+                # If the agent is LLAVA2, build the current caption
+                if caption_agent.__class__.__name__ == "LLAVA2Interrogator":
+                    print("Building caption for LLAVA2")
+                    temp_params.new_caption = build_caption(image_path, caption_dict[image_path], tags_to_ignore,
+                                                            caption_length,
                                                             subject_class, subject, replace_class, txt_action)
                 caption_out = caption_agent.interrogate(img, temp_params)
                 print(f"Caption for {image_path}: {caption_out}")
@@ -582,7 +588,8 @@ def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
 
         if params.upscale:
             shared.state.textinfo = "Upscaling..."
-            print(f"Upscaling, current VRAM usage: {vram_usage()} GB")
+            used, total = vram_usage()
+            print(f"Upscaling, current VRAM usage: {used}/{total} GB")
             scaler_dims = {}
             for scaler_name in upscalers:
                 for scaler in shared.sd_upscalers:
@@ -641,7 +648,7 @@ def do_process(params: ProcessParams) -> Tuple[List[ImageData], str]:
     print(f"Processing with params: {params}")
     output = params.src_files
     try:
-        global clip_interrogator
+        global blip_interrogator
         global image_interrogators
         # combine params.captioners and params.nl_captioners
         all_captioners = params.captioners
