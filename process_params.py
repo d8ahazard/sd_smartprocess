@@ -11,6 +11,7 @@ class ProcessParams:
     booru_min_score: float = 0.75
     caption: bool = False
     captioners: Dict[str, bool] = field(default_factory=lambda: [])
+    char_threshold: float = 0.5
     clip_append_artist: bool = False
     clip_append_flavor: bool = False
     clip_append_medium: bool = False
@@ -25,7 +26,8 @@ class ProcessParams:
     dst: str = ""
     face_model: str = "Codeformers"
     flip: bool = False
-    load_mplug_8bit: bool = False
+    insert_subject: bool = False
+    load_in_8bit: bool = False
     max_clip_tokens: float = 1.0
     max_size: int = 1024
     max_tokens: int = 75
@@ -34,6 +36,7 @@ class ProcessParams:
     nl_captioners: Dict[str, bool] = field(default_factory=lambda: [])
     num_beams: int = 5
     pad: bool = False
+    replace_blip_caption: bool = True
     replace_class: bool = False
     restore_faces: bool = False
     save_caption: bool = False
@@ -43,7 +46,6 @@ class ProcessParams:
     subject_class: str = ""
     tags_to_ignore: List[str] = field(default_factory=lambda: [])
     threshold: float = 0.5
-    char_threshold: float = 0.5
     txt_action: str = "ignore"
     upscale: bool = False
     upscale_max: int = 4096

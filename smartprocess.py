@@ -51,14 +51,10 @@ def get_backup_path(file_path, params: ProcessParams):
 
 def save_pic(img, src_name, img_index, params: ProcessParams):
     dest_dir = os.path.dirname(src_name)
-    if params.do_rename:
-        basename = f"{img_index:05}"
-    else:
-        src_name, backup_name = get_backup_path(src_name, params)
-        if src_name != backup_name and os.path.exists(src_name):
-            os.rename(src_name, backup_name)
-        basename = os.path.splitext(os.path.basename(src_name))[0]
-
+    src_name, backup_name = get_backup_path(src_name, params)
+    if src_name != backup_name and os.path.exists(src_name):
+        os.rename(src_name, backup_name)
+    basename = os.path.splitext(os.path.basename(src_name))[0]
     shared.state.current_image = img
     dest = os.path.join(dest_dir, f"{basename}.png")
     img.save(dest)
@@ -226,7 +222,7 @@ def read_caption(image):
     return existing_caption_txt
 
 
-def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_class, subject, replace_class,
+def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_class, subject, replace_class, insert_subject,
                   txt_action="ignore"):
     """
     Build a caption from an array of captions, optionally ignoring tags, optionally replacing a class name with a subject name.
@@ -288,6 +284,9 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
     #     tags_list = tags_list[:caption_length]
 
     caption_txt = ", ".join(tags_list)
+    if subject != "" and insert_subject:
+        if subject not in caption_txt:
+            caption_txt = f"{subject}, {caption_txt}"
     return caption_txt
 
 
@@ -505,13 +504,16 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
     replace_class = params.replace_class
     txt_action = params.txt_action
     save_captions = params.save_caption or params.auto_save
+    insert_subject = params.insert_subject
     agents = get_image_interrogators(params, all_captioners)
     total_files = len(files)
     total_captions = total_files * len(agents)
     pbar = tqdm(total=total_captions, desc="Captioning images")
+    blip_captions = {}
     for caption_agent in agents:
         print(f"Captioning with {caption_agent.__class__.__name__}...")
         caption_agent.load()
+        is_llava = False
         for image_data in files:
             temp_params = params
             img = image_data.get_image()
@@ -522,13 +524,25 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
             try:
                 # If the agent is LLAVA2, build the current caption
                 if caption_agent.__class__.__name__ == "LLAVA2Interrogator":
+                    is_llava = True
                     print("Building caption for LLAVA2")
                     temp_params.new_caption = build_caption(image_path, caption_dict[image_path], tags_to_ignore,
                                                             caption_length,
-                                                            subject_class, subject, replace_class, txt_action)
+                                                            subject_class, subject, replace_class, insert_subject,
+                                                            txt_action)
                 caption_out = caption_agent.interrogate(img, temp_params)
+                if caption_agent.__class__.__name__ == "BLIPInterrogator":
+                    blip_captions[image_path] = caption_out
                 print(f"Caption for {image_path}: {caption_out}")
                 caption_dict[image_path].append(caption_out)
+                if is_llava and params.replace_blip_caption:
+                    captions = caption_dict[image_path]
+                    blip_caption = blip_captions.get(image_path, None)
+                    if blip_caption is not None:
+                        if blip_caption in captions:
+                            captions.remove(blip_caption)
+                            caption_dict[image_path] = captions
+
                 pbar.update(1)
                 shared.state.job_no += 1
             except Exception as e:
@@ -537,9 +551,10 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
         caption_agent.unload()
 
     output_dict = {}
+    insert_subject = params.insert_subject
     for image_path, captions in caption_dict.items():
         caption_string = build_caption(image_path, captions, tags_to_ignore, caption_length, subject_class, subject,
-                                       replace_class, txt_action)
+                                       replace_class, insert_subject, txt_action)
         output_dict[image_path] = caption_string
         if save_captions:
             save_img_caption(image_path, caption_string, params)
@@ -551,7 +566,7 @@ def process_captions(files: List[ImageData], params: ProcessParams, all_captione
     return output
 
 
-def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
+def process_post(files: ImageData, params: ProcessParams, all_files: bool = False) -> List[ImageData]:
     output = []
     total_files = len(files)
     total_post = 0
@@ -641,10 +656,42 @@ def process_post(files: ImageData, params: ProcessParams) -> List[ImageData]:
         file.update_image(img, False)
         output.append(file)
         img_index += 1
+
+    if params.do_rename and all_files:
+        rand_addon = np.random.randint(1000, 9999)
+        img_idx = 0
+        updated_files = []
+        for file in output:
+            src = file.image_path
+            base_name = os.path.splitext(src)[0]
+            img_ext = os.path.splitext(src)[1]
+            cap_file = base_name + '.txt'
+            new_img_name = f"{img_idx}_{rand_addon}.{img_ext}"
+            new_cap_file = f"{img_idx}_{rand_addon}.txt"
+            new_img_path = os.path.join(os.path.dirname(src), new_img_name)
+            new_cap_path = os.path.join(os.path.dirname(src), new_cap_file)
+            os.rename(src, new_img_path)
+            if os.path.exists(cap_file):
+                os.rename(cap_file, new_cap_path)
+            file.image_path = new_img_path
+            updated_files.append(new_img_path)
+            img_idx += 1
+
+        output = []
+        for file in updated_files:
+            image_path = file.image_path
+            cap_path = os.path.splitext(image_path)[0] + '.txt'
+            new_image_path = image_path.replace(f"_{rand_addon}", "")
+            new_cap_path = cap_path.replace(f"_{rand_addon}", "")
+            os.rename(image_path, new_image_path)
+            if os.path.exists(cap_path):
+                os.rename(cap_path, new_cap_path)
+            file.image_path = new_image_path
+            output.append(file)
     return output
 
 
-def do_process(params: ProcessParams) -> Tuple[List[ImageData], str]:
+def do_process(params: ProcessParams, all_files=False) -> Tuple[List[ImageData], str]:
     print(f"Processing with params: {params}")
     output = params.src_files
     try:
@@ -677,7 +724,7 @@ def do_process(params: ProcessParams) -> Tuple[List[ImageData], str]:
             output = process_captions(output, params, all_captioners)
 
         if do_postprocess:
-            output = process_post(output, params)
+            output = process_post(output, params, all_files)
 
         return output, f"Successfully processed {len(output)} images."
     except Exception as e:

@@ -43,23 +43,20 @@ Avoid adding new information not supported by the existing caption or the image.
 class LLAVA2Interrogator(Interrogator):
     model = None
     processor = None
-    params = {"max_tokens": 75, "load_mplug_8bit": False}
+    params = {"max_tokens": 75, "load_in_8bit": False, "replace_blip_caption": True}
 
     def __init__(self, params: ProcessParams):
         super().__init__(params)
         logger.debug("Initializing LLM model...")
         model_path = fetch_model('MAGAer13/mplug-owl2-llama2-7b', "llm")
         model_name = get_model_name_from_path(model_path)
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.current_device = self.device
         self.load_8bit = params.load_mplug_8bit
-        self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(model_path, None,
-                                                                                                   model_name,
-                                                                                                   load_8bit=self.load_8bit,
-                                                                                                   load_4bit=False,
-                                                                                                   device="cuda")
-
-        self._to_cpu()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model = None
+        self.tokenizer = None
+        self.image_processor = None
+        self.context_len = None
+        self.current_device = None
         logger.debug("Initialized LLM model.")
 
     def interrogate(self, image: Image, params: ProcessParams = None, unload: bool = False) -> str:
@@ -109,6 +106,8 @@ class LLAVA2Interrogator(Interrogator):
         caption = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
         if params.txt_action != "include":
             caption = caption.replace(",", "").replace(".", "").replace("?", "").replace("!", "").strip()
+        if unload:
+            self.unload()
         return caption
 
     def _to_cpu(self):
@@ -133,6 +132,9 @@ class LLAVA2Interrogator(Interrogator):
         gc.collect()
 
     def _to_gpu(self):
+        if self.model is None:
+            self.load()
+            return
         if self.current_device != "cuda" and torch.cuda.is_available():
             print("Moving to GPU")
             time = datetime.now()
@@ -143,8 +145,20 @@ class LLAVA2Interrogator(Interrogator):
         # self.tokenizer.to(self.device)
 
     def unload(self):
-        print("Unloading model")
-        self._to_cpu()
+        if self.model is not None:
+            print("Unloading LLAVA2 model")
+            self._to_cpu()
 
     def load(self):
+        if self.model is None:
+            model_path = fetch_model('MAGAer13/mplug-owl2-llama2-7b', "llm")
+            model_name = get_model_name_from_path(model_path)
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.current_device = self.device
+            self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(model_path, None,
+                                                                                                       model_name,
+                                                                                                       load_8bit=self.load_8bit,
+                                                                                                       load_4bit=False,
+                                                                                                       device="cuda")
+
         self._to_gpu()

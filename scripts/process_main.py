@@ -281,6 +281,7 @@ def create_process_ui():
                         generate_caption_section()
                         sp_tags_to_ignore = gr.Textbox(label="Tags To Ignore", value="")
                         sp_replace_class = gr.Checkbox(label='Replace Class with Subject in Caption', value=False)
+                        sp_insert_subject = gr.Checkbox(label='Append subject to caption if not found', value=False)
                         sp_class = gr.Textbox(label='Subject Class', placeholder='Subject class to crop (leave '
                                                                                  'blank to auto-detect)')
                         sp_subject = gr.Textbox(label='Subject Name', placeholder='Subject Name to replace class '
@@ -413,7 +414,7 @@ def create_process_ui():
                 outputs=[sp_crop_row, sp_cap_row, sp_post_row]
             )
 
-        def process_outputs(params: ProcessParams, current=False, selected=False) -> Union[Tuple[gr.update, gr.update], Tuple[gr.update, gr.update, gr.update]]:
+        def process_outputs(params: ProcessParams, current=False, all_files=False) -> Union[Tuple[gr.update, gr.update], Tuple[gr.update, gr.update, gr.update]]:
             """Process the images and update the UI
             :param params: The parameters to use for processing
             :param current: Whether to process the current image
@@ -427,7 +428,7 @@ def create_process_ui():
 
             global file_manager
             global current_image
-            image_data, output = smartprocess.do_process(params)
+            image_data, output = smartprocess.do_process(params, all_files)
             file_manager.update_files(image_data)
             if current:
                 if len(image_data) > 0:
@@ -481,7 +482,7 @@ def create_process_ui():
             global file_manager
             params = params_to_dict(*args)
             params.src_files = file_manager.filtered_and_selected_files()
-            return process_outputs(params, selected=True)
+            return process_outputs(params)
 
         def process_all(*args):
             """Process all the images
@@ -490,7 +491,7 @@ def create_process_ui():
             global file_manager
             params = params_to_dict(*args)
             params.src_files = file_manager.filtered_files()
-            return process_outputs(params)
+            return process_outputs(params, all_files=True)
 
         def process_tags(captions):
             global tags_dict
@@ -759,6 +760,7 @@ def create_process_ui():
             "do_backup": sp_do_backup,
             "do_rename": sp_do_rename,
             "face_model": sp_face_model,
+            'insert_subject': sp_insert_subject,
             "nl_captioners": sp_nl_captioners,
             "pad": sp_pad,
             "replace_class": sp_replace_class,
