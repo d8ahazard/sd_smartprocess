@@ -72,43 +72,29 @@ class InterrogatorRegistry:
             interrogator.load()
 
     @staticmethod
-    def list_interrogators():
-        # Import all modules in the extensions.sd_smartprocess.interrogators package
+    def list_interrogators(return_cls=False):
+        # First, dynamically import all modules in the package to ensure all subclasses are loaded
         package = interrogators
-        params_dict = {}
         for importer, modname, ispkg in pkgutil.iter_modules(package.__path__, package.__name__ + '.'):
+            print(f"Importing {modname}")
             try:
                 importlib.import_module(modname)
-            except:
-                continue
+            except Exception as e:
+                print(f"Error importing {modname}: {e}")
 
-        # Find all subclasses of Interrogator globally
+        # Now, enumerate subclasses of Interrogator to access their class-level 'params'
         interrogator_dict = {}
+        subclass_names = [cls.__name__ for cls in Interrogator.__subclasses__()]
+        print(f"Subclass names: {subclass_names}")
         for cls in Interrogator.__subclasses__():
-            # Try to get the params attribute from the class
-            params = getattr(cls, "params", {})
-            interrogator_dict[cls.__name__] = params
-        return interrogator_dict
-
-    @staticmethod
-    def get_all_interrogators():
-        # Import all modules in the extensions.sd_smartprocess.interrogators package
-        package = interrogators
-        params_dict = {}
-        for importer, modname, ispkg in pkgutil.iter_modules(package.__path__, package.__name__ + '.'):
-            try:
-                importlib.import_module(modname)
-            except:
+            if return_cls:
+                interrogator_dict[cls.__name__] = cls
                 continue
+            params = getattr(cls, "params", None)
+            if params is not None:  # Ensure 'params' is defined at the class level
+                interrogator_dict[cls.__name__] = params
+            else:
+                interrogator_dict[cls.__name__] = {}
 
-        # Find all subclasses of Interrogator globally
-        interrogator_dict = {}
-        for cls in Interrogator.__subclasses__():
-            # Try to get the params attribute from the class
-            params = getattr(cls, "params", {})
-            interrogator_dict[cls.__name__] = cls
         return interrogator_dict
-
-
-
 

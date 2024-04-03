@@ -26,6 +26,7 @@ class ProcessParams:
     dst: str = ""
     face_model: str = "Codeformers"
     flip: bool = False
+    interrogation_prompt: str = "Describe this image in one detailed sentence."
     insert_subject: bool = False
     load_in_8bit: bool = False
     max_clip_tokens: float = 1.0

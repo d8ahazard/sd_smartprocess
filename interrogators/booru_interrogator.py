@@ -17,13 +17,13 @@ class BooruInterrogator(Interrogator):
         super().__init__(params)
         self.tags = None
         self.booru = modules.deepbooru.DeepDanbooru()
-        self.booru.start()
         self.model = self.booru.model
 
     def unload(self):
         self.booru.stop()
 
     def load(self):
+        self.booru.start()
         pass
 
     def interrogate(self, image: Image, params: ProcessParams, unload: bool = False) -> str:

@@ -167,7 +167,7 @@ def get_crop_clip():
 
 def get_image_interrogators(params: ProcessParams, all_captioners):
     global image_interrogators
-    all_interrogators = InterrogatorRegistry.get_all_interrogators()
+    all_interrogators = InterrogatorRegistry.list_interrogators(True)
     interrogators = all_captioners
     caption_agents = []
     print(f"Interrogators: {interrogators}")
