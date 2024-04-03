@@ -69,7 +69,7 @@ def save_img_caption(image_path: str, img_caption: str, params: ProcessParams):
         os.rename(src_name, backup_name)
     if img_caption is not None and len(img_caption) > 0:
         with open(src_name, "w", encoding="utf8") as file:
-            file.write(src_name)
+            file.write(img_caption)
     return src_name
 
 
@@ -286,7 +286,7 @@ def build_caption(image, captions_list, tags_to_ignore, caption_length, subject_
     caption_txt = ", ".join(tags_list)
     if subject != "" and insert_subject:
         if subject not in caption_txt:
-            caption_txt = f"{subject}, {caption_txt}"
+            caption_txt = f"{caption_txt}, {subject}"
     return caption_txt
 
 
