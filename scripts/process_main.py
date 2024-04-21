@@ -38,7 +38,7 @@ registry = InterrogatorRegistry()
 
 int_dict = registry.list_interrogators()
 print(f"Found {len(int_dict.keys())} interrogators: {int_dict}")
-natural_captioner_names = ["BLIP", "LLAVA2", "MoonDream"]
+natural_captioner_names = ["BLIP", "LLAVA2", "MoonDream", "Idefics2"]
 default_captioners = ["Swin"]
 
 natural_captioners = {}
