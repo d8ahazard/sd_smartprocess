@@ -26,8 +26,10 @@ class ProcessParams:
     dst: str = ""
     face_model: str = "Codeformers"
     flip: bool = False
+    idefics2_prompt: str = "Describe this image in one detailed sentence, include the subject, location, style, and type of image."
     interrogation_prompt: str = "Describe this image in one detailed sentence."
     insert_subject: bool = False
+    load_in_4bit: bool = False
     load_in_8bit: bool = False
     max_clip_tokens: float = 1.0
     max_size: int = 1024

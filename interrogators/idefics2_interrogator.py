@@ -37,14 +37,14 @@ Avoid adding new information not supported by the existing caption or the image.
 class Idefics2Interrogator(Interrogator):
     model = None
     processor = None
-    params = {"max_tokens": 75, "load_in_8bit": False, "replace_blip_caption": True}
+    params = {"max_tokens": 75, "load_in_4bit": True, "replace_blip_caption": True, "idefics2_prompt": "Describe this image in one detailed sentence, include the subject, location, style, and type of image."}
 
     def __init__(self, params: ProcessParams):
         super().__init__(params)
         logger.debug("Initializing LLM model...")
         model_path = fetch_model("HuggingFaceM4/idefics2-8b", "llm")
         model_name = get_model_name_from_path(model_path)
-        self.load_8bit = params.load_in_8bit
+        self.load_4bit = params.load_in_4bit
         self.prompt = params.interrogation_prompt
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = None
@@ -91,7 +91,7 @@ class Idefics2Interrogator(Interrogator):
         return caption
 
     def _to_cpu(self):
-        if self.load_8bit:
+        if self.load_4bit:
             print("Model is loaded in 8bit, can't move to CPU.")
             return
         from extensions.sd_smartprocess.smartprocess import vram_usage
@@ -115,14 +115,15 @@ class Idefics2Interrogator(Interrogator):
         if self.model is None:
             self.load()
             return
+        if self.load_4bit:
+            print("Model is loaded in 4bit, can't move to GPU.")
+            return
         if self.current_device != "cuda" and torch.cuda.is_available():
             print("Moving to GPU")
             time = datetime.now()
             self.model.to(self.device)
             print(f"Model to GPU: {datetime.now() - time}")
             self.current_device = "cuda"
-        # self.image_processor.to(self.device)
-        # self.tokenizer.to(self.device)
 
     def unload(self):
         if self.model is not None:
@@ -137,18 +138,23 @@ class Idefics2Interrogator(Interrogator):
             self.current_device = self.device
             print(f"Loading processor on {self.device}")
             self.processor = AutoProcessor.from_pretrained(model_path)
-            print(f"Loading model on {self.device}")
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.float16
-            )
-            self.model = AutoModelForVision2Seq.from_pretrained(
-                model_path,
-                torch_dtype=torch.float16,
-                #_attn_implementation="flash_attention_2",
-                #quantization_config=quantization_config
-            ).to(self.device)
+            if self.load_4bit:
+                print(f"Loading model.")
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=torch.float16
+                )
+                self.model = AutoModelForVision2Seq.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float16,
+                    quantization_config=quantization_config
+                )
+            else:
+                self.model = AutoModelForVision2Seq.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float16
+                ).to(self.device)
             print(f"Model loaded on {self.device}")
         self._to_gpu()
